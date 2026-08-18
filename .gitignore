@@ -1,6 +1,6 @@
 # Python virtual environment
 .venv/
-
+NIDS/.venv/
 # Project runtime
 runtime/
 
