@@ -1,0 +1,24 @@
+# Python virtual environment
+.venv/
+
+# Project runtime
+runtime/
+
+# Logs
+logs/
+*.log
+
+# Python cache
+__pycache__/
+*.py[cod]
+
+# VS Code
+.vscode/
+
+# Python packaging
+*.egg-info/
+dist/
+build/
+
+# Environment/secrets
+.env
