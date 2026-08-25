@@ -1,6 +1,7 @@
 # Python virtual environment
 .venv/
 NIDS/.venv/
+NIDS/EVE.json
 # Project runtime
 runtime/
 
