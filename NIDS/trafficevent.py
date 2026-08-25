@@ -11,7 +11,8 @@ class TrafficEvent:
         packet_size=None,
         payload_size=None,
         tcp_flags=None,
-        payload=None
+        payload=None,
+        icmp_type=None
     ):
         self.timestamp = timestamp
         self.direction = direction
@@ -24,6 +25,7 @@ class TrafficEvent:
         self.payload_size = payload_size
         self.tcp_flags = tcp_flags
         self.payload = payload
+        self.icmp_type = icmp_type
 
     def __repr__(self):
         return (
@@ -32,6 +34,7 @@ class TrafficEvent:
             f"{self.source_ip}:{self.source_port} -> "
             f"{self.destination_ip}:{self.destination_port} | "
             f"{self.protocol} | "
+            f"icmp_type={self.icmp_type} | "
             f"size={self.packet_size} | "
             f"payload={self.payload_size} bytes)"
         )
@@ -51,6 +54,7 @@ def packet_to_event(packet):
     source_port = None
     destination_port = None
     tcp_flags = None
+    icmp_type = None
 
     if packet.tcp:
         protocol = "TCP"
@@ -72,9 +76,11 @@ def packet_to_event(packet):
 
     elif packet.icmpv4:
         protocol = "ICMPv4"
+        icmp_type = packet.icmpv4.type
 
     elif packet.icmpv6:
         protocol = "ICMPv6"
+        icmp_type = packet.icmpv6.type
 
     elif packet.ipv4:
         protocol = "IPv4"
@@ -105,5 +111,6 @@ def packet_to_event(packet):
         packet_size=packet_size,
         payload_size=len(packet.payload),
         tcp_flags=tcp_flags,
-        payload=packet.payload
+        payload=packet.payload,
+        icmp_type=icmp_type
     )
