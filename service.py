@@ -1,11 +1,19 @@
+import threading
+
 import win32service
 import win32serviceutil
 import win32event
 import servicemanager
 
 from logger import get_logger
+from hids.hids import HIDSEngine, run_hids
+
 
 class IDSIPSService(win32serviceutil.ServiceFramework):
+    """
+    Windows Service wrapper for the IDS/IPS Intrusion Detection & Prevention System.
+    Maintains the IDSIPS service identity and manages the background HIDS monitoring engine.
+    """
 
     _svc_name_ = "IDSIPS"
     _svc_display_name_ = "IDSIPS Security Service"
@@ -14,49 +22,69 @@ class IDSIPSService(win32serviceutil.ServiceFramework):
     def __init__(self, args):
         win32serviceutil.ServiceFramework.__init__(self, args)
 
-        # Event used to tell the service when Windows requests a stop.
+        # Event used to signal when Windows requests the service to stop.
         self.stop_event = win32event.CreateEvent(None, 0, 0, None)
 
+        # HIDS monitoring engine and thread
+        self.hids_engine = None
+        self.hids_thread = None
+
     def SvcStop(self):
-        # Tell Windows that the service is stopping.
+        """
+        Called when Windows Service Manager signals the service to stop.
+        """
+        logger = get_logger()
+        logger.info("IDSIPS Security Service stopping.")
+
+        # Report stop pending to Service Control Manager
         self.ReportServiceStatus(win32service.SERVICE_STOP_PENDING)
 
-        # Signal the stop event.
+        # Signal HIDS engine to shut down cleanly
+        if self.hids_engine:
+            self.hids_engine.stop()
+
+        # Signal the Windows stop event
         win32event.SetEvent(self.stop_event)
 
     def SvcDoRun(self):
+        """
+        Called when the Windows Service starts.
+        Launches the HIDS monitoring engine in a background thread and waits for stop signal.
+        """
         logger = get_logger()
 
         logger.info("IDSIPS Security Service started.")
+        servicemanager.LogInfoMsg("IDSIPS Security Service has started.")
 
-        servicemanager.LogInfoMsg(
-        "IDSIPS Security Service has started."
-        )
+        try:
+            self.hids_engine = HIDSEngine()
 
-        win32event.WaitForSingleObject(
-        self.stop_event,
-        win32event.INFINITE
-        )
+            # Start HIDS continuous monitoring in a managed background thread
+            self.hids_thread = threading.Thread(
+                target=self.hids_engine.run,
+                args=(self.stop_event,),
+                name="HIDS-Monitor",
+                daemon=True,
+            )
+            self.hids_thread.start()
 
-        logger.info("IDSIPS Security Service stopped.")
+            # Keep service alive until Windows signals stop_event
+            win32event.WaitForSingleObject(
+                self.stop_event,
+                win32event.INFINITE
+            )
 
-        servicemanager.LogInfoMsg(
-        "IDSIPS Security Service has stopped."
-        )
-        # # Called when the Windows Service starts.
-        # servicemanager.LogInfoMsg(
-        #     "IDSIPS Security Service has started."
-        # )
+            # Wait for HIDS monitoring loop to gracefully exit
+            if self.hids_thread and self.hids_thread.is_alive():
+                self.hids_thread.join(timeout=10.0)
 
-        # # Keep the service running until Windows sends a stop request.
-        # win32event.WaitForSingleObject(
-        #     self.stop_event,
-        #     win32event.INFINITE
-        # )
-
-        # servicemanager.LogInfoMsg(
-        #     "IDSIPS Security Service has stopped."
-        # )
+        except Exception as e:
+            logger.exception("IDSIPS Security Service encountered an unexpected error: %s", e)
+            servicemanager.LogErrorMsg(f"IDSIPS Service Error: {e}")
+            raise
+        finally:
+            logger.info("IDSIPS Security Service stopped.")
+            servicemanager.LogInfoMsg("IDSIPS Security Service has stopped.")
 
 
 if __name__ == "__main__":

@@ -1,5 +1,6 @@
 import logging
 from pathlib import Path
+from typing import Any, Union
 
 
 # Project root directory
@@ -39,3 +40,34 @@ def get_logger():
     logger.addHandler(file_handler)
 
     return logger
+
+
+def format_security_alert(match: Any) -> str:
+    """
+    Format a RuleMatch object into a structured security log line.
+    """
+    event = getattr(match, "event", None)
+    user = event.user if event and event.user else "N/A"
+    computer = event.computer if event and event.computer else "N/A"
+    event_id = event.event_id if event else "N/A"
+    channel = event.channel if event else "N/A"
+
+    suppress_str = f" [SUPPRESSED: {match.suppression_reason}]" if getattr(match, "suppressed", False) else ""
+
+    return (
+        f"HIDS ALERT | Severity: {match.severity.value} | Rule: {match.rule_id} | "
+        f"Name: {match.rule_name} | MITRE: {match.mitre_attack} | "
+        f"EventID: {event_id} | Channel: {channel} | User: {user} | Host: {computer} | "
+        f"Details: {match.details}{suppress_str}"
+    )
+
+
+def format_correlated_alert(alert: Any) -> str:
+    """
+    Format a CorrelatedAlert object into a structured security log line.
+    """
+    return (
+        f"HIDS CORRELATION | Severity: {alert.severity.value} | CorrID: {alert.correlation_id} | "
+        f"Name: {alert.name} | MITRE: {alert.mitre_attack} | "
+        f"Events: {len(alert.events)} | Details: {alert.details}"
+    )
