@@ -1,0 +1,27 @@
+# ============================================================
+# IDSIPS HIDS Configuration
+# ============================================================
+
+hids:
+  enabled: true
+
+  channels:
+    - Security
+    - System
+    - Application
+    - Microsoft-Windows-Windows Defender/Operational
+    - Microsoft-Windows-PowerShell/Operational
+    - Windows PowerShell
+
+  polling_interval: 2
+
+  checkpoint:
+    enabled: true
+    file: logs/checkpoints.json
+
+  deduplication:
+    enabled: true
+
+  logging:
+    enabled: true
+    json_file: logs/event.json

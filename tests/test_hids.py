@@ -63,14 +63,16 @@ class TestHIDS(unittest.TestCase):
             logger=self.logger
         )
 
-        # Malformed event should not raise exception
+        # Malformed event should not raise exception and return safe empty result
         norm1, matches, corrs = engine.process_raw_event(None)
-        self.assertIsNotNone(norm1)
+        self.assertIsNone(norm1)
         self.assertEqual(len(matches), 0)
+        self.assertEqual(len(corrs), 0)
 
         norm2, matches2, corrs2 = engine.process_raw_event("<<< Not valid XML >>>")
-        self.assertIsNotNone(norm2)
+        self.assertIsNone(norm2)
         self.assertEqual(len(matches2), 0)
+        self.assertEqual(len(corrs2), 0)
 
     def test_graceful_shutdown_threading_event(self):
         engine = HIDSEngine(

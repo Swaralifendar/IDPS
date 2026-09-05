@@ -1,10 +1,10 @@
 """
 HIDS Engine Controller.
 
-Coordinates the end-to-end intrusion detection pipeline:
-Windows Event Collector -> Normalizer -> Rules Engine -> Correlator -> Severity Engine -> Logger.
-Supports continuous background monitoring, graceful service stop events, bounded alert deduplication,
-and automatic error recovery.
+Coordinates the end-to-end host intrusion detection pipeline:
+Windows Event Collector -> Normalizer -> RuleEngine (from hids.rules) -> Correlator -> Logger (event.json + PowerShell Console).
+Loads global configuration from config.yaml, supports continuous monitoring,
+graceful shutdown signals, deduplication, and atomic checkpoint persistence.
 """
 
 from collections import deque
@@ -12,6 +12,24 @@ import logging
 from pathlib import Path
 import time
 from typing import Any, Deque, Dict, List, Optional, Set, Tuple, Union
+import yaml
+
+from hids.collector import WindowsEventCollector, DEFAULT_MONITORED_CHANNELS
+from hids.correlator import EventCorrelator, CorrelatedAlert
+from hids.normalizer import NormalizedEvent, normalize_event
+from hids.rule_engine import RuleEngine, RuleMatch
+from hids.rules_parser import RuleParser, DEFAULT_RULES_FILE
+from hids.severity import Severity
+from logger import (
+    get_logger,
+    console_event,
+    console_alert,
+    console_correlation,
+    log_event_json,
+    log_security_alert_json,
+    log_correlated_alert_json,
+    EVENT_JSON_FILE,
+)
 
 try:
     import win32event
@@ -19,12 +37,55 @@ try:
 except ImportError:
     WIN32_EVENT_AVAILABLE = False
 
-from hids.collector import WindowsEventCollector
-from hids.correlator import EventCorrelator
-from hids.normalizer import NormalizedEvent, normalize_event
-from hids.rules import RuleEngine, RuleMatch
-from hids.severity import Severity
-from logger import get_logger, format_security_alert, format_correlated_alert
+
+# Default base and config paths
+BASE_DIR = Path(__file__).resolve().parent.parent
+DEFAULT_CONFIG_PATH = BASE_DIR / "config.yaml"
+
+
+def load_config(config_path: Optional[Union[str, Path]] = None) -> Dict[str, Any]:
+    """
+    Load global HIDS configuration from config.yaml.
+    Validates structure and provides sensible defaults if file is missing or incomplete.
+    """
+    cfg_file = Path(config_path) if config_path else DEFAULT_CONFIG_PATH
+
+    defaults = {
+        "hids": {
+            "enabled": True,
+            "channels": list(DEFAULT_MONITORED_CHANNELS),
+            "polling_interval": 2,
+            "checkpoint": {
+                "enabled": True,
+                "file": "logs/checkpoints.json",
+            },
+            "deduplication": {
+                "enabled": True,
+            },
+            "logging": {
+                "enabled": True,
+                "json_file": "logs/event.json",
+            },
+        }
+    }
+
+    if not cfg_file.exists():
+        return defaults
+
+    try:
+        with open(cfg_file, "r", encoding="utf-8") as f:
+            data = yaml.safe_load(f)
+        if isinstance(data, dict) and "hids" in data and isinstance(data["hids"], dict):
+            hids_cfg = data["hids"]
+            for key, val in hids_cfg.items():
+                if isinstance(val, dict) and isinstance(defaults["hids"].get(key), dict):
+                    defaults["hids"][key].update(val)
+                else:
+                    defaults["hids"][key] = val
+        return defaults
+    except Exception as exc:
+        logging.getLogger("IDSIPS").warning("Failed loading %s: %s. Using default config.", cfg_file, exc)
+        return defaults
 
 
 class AlertDeduplicator:
@@ -76,33 +137,75 @@ class HIDSEngine:
     def __init__(
         self,
         channels: Optional[List[str]] = None,
-        checkpoint_path: Optional[Path] = None,
-        poll_interval: float = 3.0,
+        checkpoint_path: Optional[Union[str, Path]] = None,
+        poll_interval: Optional[float] = None,
         collector: Optional[WindowsEventCollector] = None,
         rule_engine: Optional[RuleEngine] = None,
+        rules_file: Optional[Union[str, Path]] = None,
         correlator: Optional[EventCorrelator] = None,
         deduplicator: Optional[AlertDeduplicator] = None,
         logger: Optional[logging.Logger] = None,
+        config_path: Optional[Union[str, Path]] = None,
+        json_log_path: Optional[Union[str, Path]] = None,
     ):
-        self.poll_interval = poll_interval
+        # Load global configuration
+        self.config = load_config(config_path)
+        hids_settings = self.config.get("hids", {})
+
+        # Channels configuration
+        selected_channels = channels or hids_settings.get("channels") or list(DEFAULT_MONITORED_CHANNELS)
+
+        # Polling interval
+        if poll_interval is not None:
+            self.poll_interval = float(poll_interval)
+        else:
+            self.poll_interval = float(hids_settings.get("polling_interval", 2))
+
+        # Checkpoint path
+        if checkpoint_path is not None:
+            resolved_checkpoint = Path(checkpoint_path)
+        else:
+            cp_file_rel = hids_settings.get("checkpoint", {}).get("file", "logs/checkpoints.json")
+            resolved_checkpoint = BASE_DIR / cp_file_rel
+
+        # Logging configuration
+        if json_log_path is not None:
+            self.json_log_path = Path(json_log_path)
+        else:
+            json_log_rel = hids_settings.get("logging", {}).get("json_file", "logs/event.json")
+            self.json_log_path = BASE_DIR / json_log_rel
+
         self.logger = logger or get_logger()
+
+        # Collector
         self.collector = collector or WindowsEventCollector(
-            channels=channels, checkpoint_path=checkpoint_path
+            channels=selected_channels, checkpoint_path=resolved_checkpoint
         )
-        self.rule_engine = rule_engine or RuleEngine()
+
+        # Rule Engine (loads from hids.rules)
+        if rule_engine is not None:
+            self.rule_engine = rule_engine
+        else:
+            self.rule_engine = RuleEngine(rules_file=rules_file or DEFAULT_RULES_FILE)
+
+        # Correlator & Deduplicator
         self.correlator = correlator or EventCorrelator()
+        self.deduplicator_enabled = bool(hids_settings.get("deduplication", {}).get("enabled", True))
         self.deduplicator = deduplicator or AlertDeduplicator()
+
         self._running = False
         self._consecutive_collector_errors = 0
 
-    def process_raw_event(self, raw_event: Any) -> Tuple[Optional[NormalizedEvent], List[RuleMatch], List[Any]]:
+    def process_raw_event(
+        self, raw_event: Any
+    ) -> Tuple[Optional[NormalizedEvent], List[RuleMatch], List[CorrelatedAlert]]:
         """
         Process a single raw event through the complete pipeline:
         1. Normalize
-        2. Log live event telemetry
+        2. Log live event telemetry to event.json and console
         3. Rule evaluation
         4. Correlation
-        5. Structured alert logging
+        5. Structured alert logging to event.json and console
         Returns:
             (normalized_event, rule_matches, correlated_alerts)
         """
@@ -112,54 +215,51 @@ class HIDSEngine:
             self.logger.warning("Normalizer failed for event: %s", e)
             return None, [], []
 
-        # Operational telemetry logging for live event proof
-        rec_id_str = f"RecordID: {norm_event.record_id}" if norm_event.record_id is not None else "RecordID: N/A"
-        prov_str = f"Provider: {norm_event.provider}" if norm_event.provider else "Provider: N/A"
-        self.logger.info(
-            "HIDS EVENT | Channel: %s | EventID: %s | %s | %s | Time: %s",
-            norm_event.channel or "Unknown",
-            norm_event.event_id,
-            rec_id_str,
-            prov_str,
-            norm_event.timestamp,
-        )
+        if norm_event is None:
+            return None, [], []
 
+        # 1. Log ordinary event to event.json and console
+        try:
+            log_event_json(norm_event, json_path=self.json_log_path)
+            console_event(norm_event)
+        except Exception as e:
+            self.logger.debug("Event logging error: %s", e)
+
+        # 2. Rule evaluation
         rule_matches: List[RuleMatch] = []
         try:
             rule_matches = self.rule_engine.evaluate(norm_event)
             for match in rule_matches:
                 if match.suppressed:
-                    self.logger.debug(
-                        "Suppressed Alert | Rule: %s | Reason: %s",
-                        match.rule_id,
-                        match.suppression_reason,
-                    )
                     continue
 
                 rec_id = norm_event.record_id if norm_event.record_id is not None else 0
                 fingerprint = f"{match.rule_id}:{norm_event.channel}:{norm_event.event_id}:{rec_id}:{norm_event.user}"
 
-                if not self.deduplicator.is_duplicate(fingerprint):
-                    self.deduplicator.record(fingerprint)
-                    alert_line = format_security_alert(match)
+                if not self.deduplicator_enabled or not self.deduplicator.is_duplicate(fingerprint):
+                    if self.deduplicator_enabled:
+                        self.deduplicator.record(fingerprint)
 
-                    if match.severity >= Severity.HIGH:
-                        self.logger.warning(alert_line)
-                    else:
-                        self.logger.info(alert_line)
+                    # Output colorized alert to PowerShell console
+                    console_alert(match)
+
+                    # Write structured alert to event.json
+                    log_security_alert_json(match, json_path=self.json_log_path)
 
         except Exception as e:
             self.logger.error("Rule evaluation error for EventID %s: %s", norm_event.event_id, e)
 
-        correlated_alerts = []
+        # 3. Correlation evaluation
+        correlated_alerts: List[CorrelatedAlert] = []
         try:
             correlated_alerts = self.correlator.process_event(norm_event)
             for alert in correlated_alerts:
-                corr_line = format_correlated_alert(alert)
-                if alert.severity >= Severity.HIGH:
-                    self.logger.warning(corr_line)
-                else:
-                    self.logger.info(corr_line)
+                # Output colorized correlation alert to PowerShell console
+                console_correlation(alert)
+
+                # Write structured correlation alert to event.json
+                log_correlated_alert_json(alert, json_path=self.json_log_path)
+
         except Exception as e:
             self.logger.error("Correlation error for EventID %s: %s", norm_event.event_id, e)
 
@@ -264,7 +364,7 @@ class HIDSEngine:
 
 def run_hids(stop_event: Any = None):
     """
-    Top-level entry point preserving the existing prototype interface.
+    Top-level entry point preserving the existing interface.
     """
     engine = HIDSEngine()
     engine.run(stop_event=stop_event)

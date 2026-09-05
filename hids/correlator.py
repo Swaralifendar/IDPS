@@ -185,10 +185,12 @@ class EventCorrelator:
             self._fired_correlations.popleft()
         self._fired_correlations.append((now_ts, signature))
 
-    def process_event(self, event: NormalizedEvent) -> List[CorrelatedAlert]:
+    def process_event(self, event: Optional[NormalizedEvent]) -> List[CorrelatedAlert]:
         """
         Process a normalized event and return any triggered multi-event correlation alerts.
         """
+        if event is None:
+            return []
         alerts: List[CorrelatedAlert] = []
         now_ts = event.timestamp_dt.timestamp()
 

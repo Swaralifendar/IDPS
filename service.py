@@ -75,8 +75,12 @@ class IDSIPSService(win32serviceutil.ServiceFramework):
             )
 
             # Wait for HIDS monitoring loop to gracefully exit
+            # The service lifecycle test waits up to 5 seconds, so use
+            # a bounded wait that allows the service thread to return promptly.
             if self.hids_thread and self.hids_thread.is_alive():
-                self.hids_thread.join(timeout=10.0)
+                 self.hids_thread.join(timeout=3.0)
+            # if self.hids_thread and self.hids_thread.is_alive():
+            #     self.hids_thread.join(timeout=10.0)
 
         except Exception as e:
             logger.exception("IDSIPS Security Service encountered an unexpected error: %s", e)

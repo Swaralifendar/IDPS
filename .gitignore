@@ -1,5 +1,8 @@
 # Python virtual environment
 .venv/
+venv/
+env/
+ENV/
 
 # Project runtime
 runtime/
@@ -7,18 +10,44 @@ runtime/
 # Logs
 logs/
 *.log
+*.jsonl
 
 # Python cache
 __pycache__/
+**/__pycache__/
 *.py[cod]
+*$py.class
 
 # VS Code
 .vscode/
+.idea/
 
 # Python packaging
 *.egg-info/
 dist/
 build/
+.eggs/
 
 # Environment/secrets
 .env
+.env.*
+
+# Checkpoints / Runtime State
+checkpoints/
+*.checkpoint
+
+# ==============================
+# OS Generated Files
+# ==============================
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# ==============================
+# Temporary Files
+# ==============================
+*.tmp
+*.temp
+*.bak
+*.swp
+*.swo

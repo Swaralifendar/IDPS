@@ -346,9 +346,6 @@ def normalize_event(event: Any) -> Optional[NormalizedEvent]:
         if event_dict is None:
             return None
     elif isinstance(event, dict):
-        if not event:
-            return None
-
         if "raw_xml" in event and isinstance(event["raw_xml"], str):
             event_dict = parse_xml_event(event["raw_xml"])
             if event_dict is not None:
@@ -358,18 +355,11 @@ def normalize_event(event: Any) -> Optional[NormalizedEvent]:
             else:
                 event_dict = event.copy()
         else:
-            # Check if dictionary contains any recognizable event fields
-            valid_keys = {
-                "event_id", "Id", "EventID", "channel", "Channel", "LogName",
-                "ProviderName", "provider", "TimeCreated", "event_data", "message", "Message"
-            }
-            if not any(k in event for k in valid_keys):
-                return None
             event_dict = event.copy()
     else:
         return None
 
-    if not event_dict:
+    if event_dict is None:
         return None
 
     # Extract event data dict

@@ -1,3 +1,4 @@
+import json
 import os
 from pathlib import Path
 import tempfile
@@ -5,13 +6,14 @@ import unittest
 
 from hids.hids import HIDSEngine
 from hids.severity import Severity
-from logger import get_logger, LOG_FILE
+from logger import get_logger, EVENT_JSON_FILE
 
 
 class TestHIDSIntegration(unittest.TestCase):
     def setUp(self):
         self.temp_dir = tempfile.TemporaryDirectory()
         self.checkpoint_file = Path(self.temp_dir.name) / "checkpoints.json"
+        self.json_log = Path(self.temp_dir.name) / "test_event.json"
         self.logger = get_logger()
 
     def tearDown(self):
@@ -39,7 +41,8 @@ class TestHIDSIntegration(unittest.TestCase):
 
         engine = HIDSEngine(
             checkpoint_path=self.checkpoint_file,
-            logger=self.logger
+            logger=self.logger,
+            json_log_path=self.json_log,
         )
 
         _, matches, corrs = engine.process_raw_event(sample_xml)
@@ -49,20 +52,28 @@ class TestHIDSIntegration(unittest.TestCase):
         self.assertEqual(match.severity, Severity.HIGH)
         self.assertIn("Ransomware shadow copy deletion", match.details)
 
-        # Verify log file exists and contains the alert line
-        self.assertTrue(LOG_FILE.exists())
-        with open(LOG_FILE, "r", encoding="utf-8", errors="replace") as f:
-            log_content = f.read()
+        # Verify event.json exists and contains both event and alert objects
+        self.assertTrue(self.json_log.exists())
+        with open(self.json_log, "r", encoding="utf-8") as f:
+            records = [json.loads(line) for line in f if line.strip()]
 
-        self.assertIn("HIDS ALERT", log_content)
-        self.assertIn("PROC-001", log_content)
-        self.assertIn("HIGH", log_content)
-        self.assertIn("vssadmin.exe delete shadows", log_content)
+        event_records = [r for r in records if r.get("type") == "event"]
+        alert_records = [r for r in records if r.get("type") == "alert"]
+
+        self.assertGreaterEqual(len(event_records), 1)
+        self.assertGreaterEqual(len(alert_records), 1)
+
+        alert = alert_records[0]
+        self.assertEqual(alert["rule_id"], "PROC-001")
+        self.assertEqual(alert["severity"], "HIGH")
+        self.assertIn("Ransomware shadow copy deletion", alert["details"])
+        self.assertIn("+05:30", alert["timestamp"])
 
     def test_end_to_end_brute_force_correlation_to_log_file(self):
         engine = HIDSEngine(
             checkpoint_path=self.checkpoint_file,
-            logger=self.logger
+            logger=self.logger,
+            json_log_path=self.json_log,
         )
 
         # Feed 3 failed logons
@@ -92,13 +103,15 @@ class TestHIDSIntegration(unittest.TestCase):
         self.assertEqual(corrs[0].correlation_id, "CORR-001")
         self.assertEqual(corrs[0].severity, Severity.CRITICAL)
 
-        # Verify correlated alert logged to idsips.log
-        with open(LOG_FILE, "r", encoding="utf-8", errors="replace") as f:
-            log_content = f.read()
+        # Verify correlated alert logged to event.json
+        with open(self.json_log, "r", encoding="utf-8") as f:
+            records = [json.loads(line) for line in f if line.strip()]
 
-        self.assertIn("HIDS CORRELATION", log_content)
-        self.assertIn("CORR-001", log_content)
-        self.assertIn("CRITICAL", log_content)
+        corr_records = [r for r in records if r.get("type") == "correlation"]
+        self.assertEqual(len(corr_records), 1)
+        self.assertEqual(corr_records[0]["correlation_id"], "CORR-001")
+        self.assertEqual(corr_records[0]["severity"], "CRITICAL")
+        self.assertIn("+05:30", corr_records[0]["timestamp"])
 
 
 if __name__ == "__main__":

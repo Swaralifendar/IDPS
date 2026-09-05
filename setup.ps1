@@ -82,7 +82,7 @@ Write-Host "Python runtime verified." -ForegroundColor Green
 # ------------------------------------------------------------
 
 Write-Host ""
-Write-Host "[4/6] Checking pywin32..." -ForegroundColor Yellow
+Write-Host "[4/6] Checking Python dependencies..." -ForegroundColor Yellow
 
 $PyWin32Check = & $RuntimePython -c "import win32service, win32serviceutil; print('OK')" 2>$null
 
@@ -102,6 +102,30 @@ if ($PyWin32Check -ne "OK") {
 }
 else {
     Write-Host "pywin32 already installed." -ForegroundColor Green
+}
+
+# ------------------------------------------------------------
+# Check PyYAML
+# ------------------------------------------------------------
+
+$PyYAMLCheck = & $RuntimePython -c "import yaml; print('OK')" 2>$null
+
+if ($PyYAMLCheck -ne "OK") {
+
+    Write-Host "PyYAML not found. Installing..."
+
+    & $RuntimePython -m pip install PyYAML
+
+    $PyYAMLCheck = & $RuntimePython -c "import yaml; print('OK')" 2>$null
+
+    if ($PyYAMLCheck -ne "OK") {
+        throw "PyYAML installation failed."
+    }
+
+    Write-Host "PyYAML installed successfully." -ForegroundColor Green
+}
+else {
+    Write-Host "PyYAML already installed." -ForegroundColor Green
 }
 
 

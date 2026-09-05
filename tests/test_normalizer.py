@@ -80,15 +80,22 @@ class TestNormalizer(unittest.TestCase):
         self.assertEqual(dt3.tzinfo, timezone.utc)
 
     def test_missing_fields_resilience(self):
-        # Empty or malformed input must not raise exceptions
+        # Case B: Structurally usable events with missing fields return NormalizedEvent with safe defaults
         norm1 = normalize_event({})
+        self.assertIsNotNone(norm1)
         self.assertEqual(norm1.event_id, 0)
         self.assertEqual(norm1.user, "")
         self.assertIsNotNone(norm1.timestamp_dt)
 
-        norm2 = normalize_event("<Invalid XML><<<<")
+        norm2 = normalize_event({"Channel": "System"})
+        self.assertIsNotNone(norm2)
         self.assertEqual(norm2.event_id, 0)
-        self.assertIn("Invalid XML", norm2.message)
+        self.assertEqual(norm2.channel, "System")
+
+        # Case A: Completely invalid inputs return None
+        self.assertIsNone(normalize_event(None))
+        self.assertIsNone(normalize_event("<Invalid XML><<<<"))
+        self.assertIsNone(normalize_event(12345))
 
     def test_to_dict_and_access(self):
         norm = normalize_event({
