@@ -1,0 +1,10 @@
+network:
+  HOME_NET:
+    - "10.200.10.0/23"
+
+  INTERFACES:
+    - name: "Wi-Fi"
+      index: 30
+
+    - name: "Ethernet"
+      index: 18

@@ -66,7 +66,8 @@ def packet_to_event(packet):
             "ACK": packet.tcp.ack,
             "FIN": packet.tcp.fin,
             "RST": packet.tcp.rst,
-            "PSH": packet.tcp.psh
+            "PSH": packet.tcp.psh,
+             "URG": packet.tcp.urg
         }
 
     elif packet.udp:
@@ -109,8 +110,8 @@ def packet_to_event(packet):
         source_port=source_port,
         destination_port=destination_port,
         packet_size=packet_size,
-        payload_size=len(packet.payload),
+        payload_size=len(packet.payload) if packet.payload else 0,
         tcp_flags=tcp_flags,
-        payload=packet.payload,
+        payload=packet.payload or b"",
         icmp_type=icmp_type
     )

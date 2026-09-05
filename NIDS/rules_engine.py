@@ -18,6 +18,7 @@ class Alert:
         self.msg = rule.msg
         self.action = rule.action
         self.classtype = rule.classtype
+        self.attack_type = rule.attack_type
         self.priority = rule.priority
         self.protocol = event.protocol
         self.source_ip = event.source_ip
@@ -28,7 +29,7 @@ class Alert:
         self.icmp_type = getattr(event, "icmp_type", None)
         self.rule = rule
         self.event = event
-
+        
     def to_dict(self) -> dict:
         return {
             "timestamp": self.timestamp,
@@ -77,6 +78,7 @@ class Alert:
                 "signature": self.msg,
                 "category": self.classtype,
                 "severity": self.priority,
+                "attack_type": self.attack_type,
                 "sid": self.sid,
                 "msg": self.msg
             },
