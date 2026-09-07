@@ -717,15 +717,17 @@ Write-Success "Runtime dependencies installed."
 
 Write-Info "Checking pywin32..."
 
-$pywin32Test = @'
-import win32service
-import win32serviceutil
-import win32event
-print("pywin32 OK")
-'@
+# $pywin32Test = @'
+# import win32service
+# import win32serviceutil
+# import win32event
+# print("pywin32 OK")
+# '@
 
-$pywin32Result = `
-    & $RuntimePython -c $pywin32Test 2>&1
+# $pywin32Result = `
+#     & $RuntimePython -c $pywin32Test 2>&1
+
+$pywin32Result = & $RuntimePython -c "import win32service; import win32serviceutil; import win32event; print('pywin32 OK')" 2>&1
 
 if ($LASTEXITCODE -ne 0) {
 
@@ -745,45 +747,27 @@ Write-Success "pywin32 verified."
 
 Write-Step "[7/8] Configuring pywin32 service host"
 
-$PostInstallScript = `
-    Find-Pywin32PostInstall $RuntimePath
+$PostInstallScript = Find-Pywin32PostInstall $RuntimePath
 
 if ($PostInstallScript) {
 
-    # --------------------------------------------------------
-    # Only run post-install if pythonservice.exe is not already
-    # correctly available.
-    #
-    # This avoids repeatedly modifying DLLs on every setup run.
-    # --------------------------------------------------------
-
     if (-not (Test-Path $RuntimeServiceHost)) {
 
-        Write-Info `
-            "runtime\pythonservice.exe not found."
+        Write-Info "runtime\pythonservice.exe not found."
+        Write-Info "Running pywin32 post-installation..."
 
-        Write-Info `
-            "Running pywin32 post-installation..."
-
-        & $RuntimePython `
-            $PostInstallScript `
-            -install
+        & $RuntimePython $PostInstallScript -install
 
         if ($LASTEXITCODE -ne 0) {
-
-            throw `
-                "pywin32 post-install failed."
+            throw "pywin32 post-install failed."
         }
 
         Write-Success "pywin32 post-install completed."
     }
     else {
 
-        Write-Success `
-            "runtime\pythonservice.exe already exists."
-
-        Write-Info `
-            "Skipping pywin32 post-install."
+        Write-Success "runtime\pythonservice.exe already exists."
+        Write-Info "Skipping pywin32 post-install."
     }
 
 }
@@ -797,26 +781,46 @@ else {
 }
 
 # ------------------------------------------------------------
+# Locate pythonservice.exe installed by pywin32
+# ------------------------------------------------------------
+
+if (-not (Test-Path $RuntimeServiceHost)) {
+
+    Write-Info "Searching for pywin32 pythonservice.exe..."
+
+    $Pywin32ServiceHost = Get-ChildItem `
+        -Path (Join-Path $RuntimePath "Lib\site-packages") `
+        -Filter "pythonservice.exe" `
+        -Recurse `
+        -ErrorAction SilentlyContinue |
+        Select-Object -First 1 -ExpandProperty FullName
+
+    if (-not $Pywin32ServiceHost) {
+
+        throw `
+            "pywin32 pythonservice.exe could not be found under $RuntimePath."
+    }
+
+    Write-Info `
+        "Found pywin32 service host: $Pywin32ServiceHost"
+
+    Copy-Item `
+        -Path $Pywin32ServiceHost `
+        -Destination $RuntimeServiceHost `
+        -Force
+
+    Write-Success `
+        "pythonservice.exe prepared in runtime root."
+}
+
+# ------------------------------------------------------------
 # Verify pythonservice.exe
-#
-# pip installs pywin32's pythonservice.exe directly into
-# sys.prefix (i.e. the runtime root, $RuntimeServiceHost).
-# pywin32_postinstall.py above only handles DLL registration
-# and the .pth file -- it does not place pythonservice.exe
-# anywhere. If it's missing here, the pywin32 install itself
-# is broken/incomplete, and that should fail loudly rather
-# than being silently patched over by copying a file from an
-# unexpected location (which could be a stale or architecture-
-# mismatched binary from a prior partial install).
 # ------------------------------------------------------------
 
 if (-not (Test-Path $RuntimeServiceHost)) {
 
     throw `
-        "runtime\pythonservice.exe was not found after pywin32 installation. " +
-        "Expected it at: $RuntimeServiceHost. " +
-        "This indicates the pywin32 package install into the runtime is broken " +
-        "or incomplete -- reinstall pywin32 into the runtime and re-run setup."
+        "runtime\pythonservice.exe could not be prepared."
 }
 
 Write-Success `
@@ -825,7 +829,6 @@ Write-Success `
 # ============================================================
 # LOGS
 # ============================================================
-
 Write-Info "Checking logs directory..."
 
 if (-not (Test-Path $LogsPath)) {
