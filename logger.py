@@ -10,6 +10,7 @@ from datetime import datetime, timezone, timedelta
 import json
 import logging
 from pathlib import Path
+import socket
 import sys
 import threading
 from typing import Any, Dict, List, Optional, Union
@@ -38,6 +39,17 @@ def get_current_ist() -> datetime:
     """Return current timezone-aware datetime in IST."""
     return datetime.now(IST)
 
+def get_system_ip() -> str:
+    """Return the primary IPv4 address of the local system."""
+    try:
+        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
+            sock.connect(("8.8.8.8", 80))
+            return sock.getsockname()[0]
+    except Exception:
+        try:
+            return socket.gethostbyname(socket.gethostname())
+        except Exception:
+            return "127.0.0.1"
 
 def to_ist_iso(dt_or_str: Any) -> str:
     """
@@ -218,6 +230,8 @@ def log_event_json(event: Any, json_path: Optional[Union[str, Path]] = None) -> 
         "timestamp": timestamp_ist,
         "processed_at": processed_ist,
         "type": "event",
+        "sensor": "HIDS",
+        "system_ip": get_system_ip(),
         "channel": getattr(event, "channel", "Unknown"),
         "event_id": getattr(event, "event_id", 0),
         "record_id": getattr(event, "record_id", None),
@@ -246,6 +260,8 @@ def log_security_alert_json(match: Any, json_path: Optional[Union[str, Path]] = 
         "timestamp": timestamp_ist,
         "processed_at": processed_ist,
         "type": "alert",
+        "sensor": "HIDS",
+        "system_ip": get_system_ip(),
         "rule_id": getattr(match, "rule_id", "N/A"),
         "rule_name": getattr(match, "rule_name", "N/A"),
         "severity": sev_str,
@@ -277,6 +293,8 @@ def log_correlated_alert_json(alert: Any, json_path: Optional[Union[str, Path]] 
         "timestamp": timestamp_ist,
         "processed_at": timestamp_ist,
         "type": "correlation",
+        "sensor": "HIDS",
+        "system_ip": get_system_ip(),
         "correlation_id": getattr(alert, "correlation_id", "N/A"),
         "name": getattr(alert, "name", "N/A"),
         "severity": sev_str,
