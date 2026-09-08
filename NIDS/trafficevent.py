@@ -1,3 +1,5 @@
+from datetime import datetime, timezone, timedelta
+
 class TrafficEvent:
     def __init__(
         self,
@@ -99,10 +101,11 @@ def packet_to_event(packet):
         packet_size = packet.ipv6.packet_len
     else:
         packet_size = None
-
+    # Convert packet timestamp to HIDS-style ISO-8601 timestamp
+    timestamp = datetime.now().astimezone().isoformat()  
     # Create our TrafficEvent
     return TrafficEvent(
-        timestamp=packet.timestamp,
+        timestamp=timestamp,
         direction=direction,
         source_ip=packet.src_addr,
         destination_ip=packet.dst_addr,
