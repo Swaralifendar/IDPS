@@ -21,7 +21,14 @@ class RuleMetadata:
     description: str
     severity: Severity
     mitre_attack: str
+    category_type:List[str]
+    attack_type: str
 
+    @property
+    def primary_category_type(self) -> str:
+        """First (primary) category_type entry -- for callers that want a single value."""
+        return self.category_type[0] if self.category_type else "BENIGN_TEST"
+ 
     @property
     def mitre_list(self) -> List[str]:
         """Return list of MITRE ATT&CK technique IDs."""
@@ -40,6 +47,8 @@ RULE_METADATA_REGISTRY: Dict[str, RuleMetadata] = {
         description="A user logon attempt failed due to bad credentials, an unknown user, or an expired account.",
         severity=Severity.LOW,
         mitre_attack="T1078, T1110.001",
+        category_type=["UNAUTHORIZED_ACCESS"],
+        attack_type="Brute Force",
     ),
     "PRV-001": RuleMetadata(
         rule_id="PRV-001",
@@ -47,6 +56,8 @@ RULE_METADATA_REGISTRY: Dict[str, RuleMetadata] = {
         description="Special administrative privileges were assigned to a new logon session.",
         severity=Severity.MEDIUM,
         mitre_attack="T1078.002, T1068",
+        category_type=["PRIVILEGE_ESCALATION"],
+        attack_type="Privilege Escalation",
     ),
     "PRV-002": RuleMetadata(
         rule_id="PRV-002",
@@ -54,6 +65,8 @@ RULE_METADATA_REGISTRY: Dict[str, RuleMetadata] = {
         description="A member was added to a security-enabled local or global administrative group.",
         severity=Severity.HIGH,
         mitre_attack="T1098, T1068",
+        category_type=["PRIVILEGE_ESCALATION", "PERSISTENCE"],
+        attack_type="Account Manipulation",
     ),
     "PRV-003": RuleMetadata(
         rule_id="PRV-003",
@@ -61,6 +74,8 @@ RULE_METADATA_REGISTRY: Dict[str, RuleMetadata] = {
         description="A new local or domain user account was created.",
         severity=Severity.MEDIUM,
         mitre_attack="T1136.001",
+        category_type=["PERSISTENCE"],
+        attack_type="Account Manipulation",
     ),
     "PROC-001": RuleMetadata(
         rule_id="PROC-001",
@@ -68,6 +83,8 @@ RULE_METADATA_REGISTRY: Dict[str, RuleMetadata] = {
         description="A process creation event was detected and evaluated for suspicious execution characteristics.",
         severity=Severity.HIGH,
         mitre_attack="T1059, T1003, T1070",
+        category_type=["EXPLOIT", "C2"],
+        attack_type="Execution",
     ),
     "SRV-001": RuleMetadata(
         rule_id="SRV-001",
@@ -75,6 +92,8 @@ RULE_METADATA_REGISTRY: Dict[str, RuleMetadata] = {
         description="A new Windows service was installed in the system, potentially indicating persistence or privilege escalation.",
         severity=Severity.HIGH,
         mitre_attack="T1543.003",
+        category_type=["PERSISTENCE"],
+        attack_type="Persistence",
     ),
     "SRV-002": RuleMetadata(
         rule_id="SRV-002",
@@ -82,6 +101,8 @@ RULE_METADATA_REGISTRY: Dict[str, RuleMetadata] = {
         description="A Windows service crashed or terminated unexpectedly.",
         severity=Severity.MEDIUM,
         mitre_attack="T1489",
+        category_type=["DEFENSE_EVASION"],
+        attack_type="Persistence",
     ),
     "MAL-001": RuleMetadata(
         rule_id="MAL-001",
@@ -89,6 +110,8 @@ RULE_METADATA_REGISTRY: Dict[str, RuleMetadata] = {
         description="Microsoft Defender detected malware or an active security threat on the host.",
         severity=Severity.CRITICAL,
         mitre_attack="T1204",
+        category_type=["MALWARE"],
+        attack_type="Malware",
     ),
     "MAL-002": RuleMetadata(
         rule_id="MAL-002",
@@ -96,6 +119,8 @@ RULE_METADATA_REGISTRY: Dict[str, RuleMetadata] = {
         description="Microsoft Defender real-time antivirus protection was turned off or tampered with.",
         severity=Severity.CRITICAL,
         mitre_attack="T1562.001",
+        category_type=["DEFENSE_EVASION"],
+        attack_type="Defense Evasion",
     ),
     "MAL-003": RuleMetadata(
         rule_id="MAL-003",
@@ -103,6 +128,8 @@ RULE_METADATA_REGISTRY: Dict[str, RuleMetadata] = {
         description="A file, folder, or process exclusion was added to Windows Defender, potentially to evade malware detection.",
         severity=Severity.HIGH,
         mitre_attack="T1562.001",
+        category_type=["DEFENSE_EVASION"],
+        attack_type="Defense Evasion",
     ),
     "PSH-001": RuleMetadata(
         rule_id="PSH-001",
@@ -110,6 +137,8 @@ RULE_METADATA_REGISTRY: Dict[str, RuleMetadata] = {
         description="Suspicious PowerShell commands or scripting activity was detected.",
         severity=Severity.HIGH,
         mitre_attack="T1059.001",
+        category_type=["EXPLOIT", "C2"],
+        attack_type="PowerShell",
     ),
     "LOG-001": RuleMetadata(
         rule_id="LOG-001",
@@ -117,6 +146,8 @@ RULE_METADATA_REGISTRY: Dict[str, RuleMetadata] = {
         description="A Windows audit or system event log was deliberately cleared, potentially indicating defense evasion.",
         severity=Severity.CRITICAL,
         mitre_attack="T1070.001",
+        category_type=["DEFENSE_EVASION"],
+        attack_type="Defense Evasion",
     ),
     "ACC-001": RuleMetadata(
         rule_id="ACC-001",
@@ -124,6 +155,8 @@ RULE_METADATA_REGISTRY: Dict[str, RuleMetadata] = {
         description="A user account was locked out after repeated failed logon attempts.",
         severity=Severity.MEDIUM,
         mitre_attack="T1110",
+        category_type=["UNAUTHORIZED_ACCESS"],
+        attack_type="Account Manipulation",
     ),
     "ACC-002": RuleMetadata(
         rule_id="ACC-002",
@@ -131,6 +164,8 @@ RULE_METADATA_REGISTRY: Dict[str, RuleMetadata] = {
         description="A previously disabled user account was re-enabled.",
         severity=Severity.LOW,
         mitre_attack="T1098",
+        category_type=["PERSISTENCE"],
+        attack_type="Account Manipulation",
     ),
     "ACC-003": RuleMetadata(
         rule_id="ACC-003",
@@ -138,6 +173,8 @@ RULE_METADATA_REGISTRY: Dict[str, RuleMetadata] = {
         description="A user account was disabled, potentially to hinder detection or as part of account manipulation.",
         severity=Severity.LOW,
         mitre_attack="T1531",
+        category_type=["DEFENSE_EVASION"],
+        attack_type="Account Manipulation",
     ),
     "ACC-004": RuleMetadata(
         rule_id="ACC-004",
@@ -145,6 +182,8 @@ RULE_METADATA_REGISTRY: Dict[str, RuleMetadata] = {
         description="An attempt was made to reset a user account's password.",
         severity=Severity.MEDIUM,
         mitre_attack="T1098",
+        category_type=["PERSISTENCE"],
+        attack_type="Credential Access",
     ),
     "AUTH-001": RuleMetadata(
         rule_id="AUTH-001",
@@ -152,6 +191,8 @@ RULE_METADATA_REGISTRY: Dict[str, RuleMetadata] = {
         description="A process attempted to logon using explicitly supplied credentials, a pattern associated with lateral movement or pass-the-hash activity.",
         severity=Severity.MEDIUM,
         mitre_attack="T1550.002",
+        category_type=["LATERAL_MOVEMENT", "UNAUTHORIZED_ACCESS"],
+        attack_type="Credential Access",
     ),
     "LOGON-001": RuleMetadata(
         rule_id="LOGON-001",
@@ -159,6 +200,8 @@ RULE_METADATA_REGISTRY: Dict[str, RuleMetadata] = {
         description="A remote interactive (RDP) logon was detected.",
         severity=Severity.MEDIUM,
         mitre_attack="T1021.001",
+        category_type=["UNAUTHORIZED_ACCESS"],
+        attack_type="Initial Access",
     ),
     "SCHD-001": RuleMetadata(
         rule_id="SCHD-001",
@@ -166,6 +209,8 @@ RULE_METADATA_REGISTRY: Dict[str, RuleMetadata] = {
         description="A new scheduled task was created, potentially indicating a persistence mechanism.",
         severity=Severity.HIGH,
         mitre_attack="T1053.005",
+        category_type=["PERSISTENCE"],
+        attack_type="Persistence",
     ),
     "AUDIT-001": RuleMetadata(
         rule_id="AUDIT-001",
@@ -173,6 +218,8 @@ RULE_METADATA_REGISTRY: Dict[str, RuleMetadata] = {
         description="The system audit policy was modified, potentially to evade detection.",
         severity=Severity.HIGH,
         mitre_attack="T1562.002",
+        category_type=["DEFENSE_EVASION"],
+        attack_type="Defense Evasion",
     ),
     "FW-001": RuleMetadata(
         rule_id="FW-001",
@@ -180,6 +227,8 @@ RULE_METADATA_REGISTRY: Dict[str, RuleMetadata] = {
         description="A new Windows Firewall rule was added or modified, potentially to enable unauthorized network access.",
         severity=Severity.MEDIUM,
         mitre_attack="T1562.004",
+        category_type=["POLICY_VIOLATION", "DEFENSE_EVASION"],
+        attack_type="Defense Evasion",
     ),
 }
 
@@ -198,4 +247,6 @@ def get_rule_metadata(rule_id: str) -> RuleMetadata:
         description=f"Security detection rule {rule_id}",
         severity=Severity.MEDIUM,
         mitre_attack="N/A",
+        category_type=["POLICY_VIOLATION", "DEFENSE_EVASION"],
+        attack_type="N/A"
     )

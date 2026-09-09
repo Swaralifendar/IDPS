@@ -28,6 +28,8 @@ class RuleMatch:
     severity: Severity
     description: str
     mitre_attack: str
+    category_type: List[str]
+    attack_type: str
     event: NormalizedEvent
     details: str = ""
     timestamp: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
@@ -42,6 +44,8 @@ class RuleMatch:
             "severity": self.severity.value,
             "description": self.description,
             "mitre_attack": self.mitre_attack,
+            "category_type": self.category_type,
+            "attack_type": self.attack_type,
             "details": self.details,
             "timestamp": self.timestamp,
             "suppressed": self.suppressed,
@@ -382,6 +386,7 @@ class RuleEngine:
             severity=meta.severity,
             description=meta.description,
             mitre_attack=meta.mitre_attack,
+            attack_type=meta.attack_type,
             event=event,
             details=details,
         )

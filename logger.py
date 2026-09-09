@@ -266,6 +266,8 @@ def log_security_alert_json(match: Any, json_path: Optional[Union[str, Path]] = 
         "rule_name": getattr(match, "rule_name", "N/A"),
         "severity": sev_str,
         "mitre_attack": _format_mitre_attack(getattr(match, "mitre_attack", "")),
+        "category_type": getattr(match, "category_type", []) or ["BENIGN_TEST"],
+        "attack_type": getattr(match, "attack_type", "N/A"),
         "channel": getattr(event, "channel", "N/A") if event else "N/A",
         "event_id": getattr(event, "event_id", None) if event else None,
         "record_id": getattr(event, "record_id", None) if event else None,
