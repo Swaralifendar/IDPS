@@ -8,3 +8,8 @@
 2026-08-18 17:35:08,560 | INFO | IDSIPS Security Service stopped.
 2026-08-25 12:33:07,848 | INFO | IDSIPS Security Service started.
 2026-08-25 12:33:24,291 | INFO | IDSIPS Security Service stopped.
+2026-09-10 16:20:38,380 | INFO | IDSIPS Security Service started.
+2026-09-10 16:20:38,394 | INFO | NIDS worker started. PID: 12444
+2026-09-10 16:24:49,523 | INFO | IDSIPS Security Service stopped.
+2026-09-10 16:27:43,943 | INFO | IDSIPS Security Service started.
+2026-09-10 16:27:43,955 | INFO | NIDS worker started. PID: 5708
