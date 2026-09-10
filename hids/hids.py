@@ -242,7 +242,7 @@ class HIDSEngine:
 
                     # Output colorized alert to PowerShell console
                     console_alert(match)
-                          
+                       
                     # Write structured alert to event.json
                     log_security_alert_json(match, json_path=self.json_log_path)
 

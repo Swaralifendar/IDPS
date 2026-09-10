@@ -386,6 +386,7 @@ class RuleEngine:
             severity=meta.severity,
             description=meta.description,
             mitre_attack=meta.mitre_attack,
+            category_type=meta.category_type,
             attack_type=meta.attack_type,
             event=event,
             details=details,
