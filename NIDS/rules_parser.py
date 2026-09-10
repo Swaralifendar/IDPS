@@ -65,7 +65,7 @@ class Rule:
         packet_size: Optional[str] = None,
         icmp_type: Optional[Union[int, str]] = None,
         classtype: str = "misc-activity",
-        attack_type: Optional[str] = None,
+        category_type: Optional[List[str]] = None,
         priority: Union[int, str] = 3,
         sameip: bool = False,
         raw_rule: str = ""
@@ -85,10 +85,10 @@ class Rule:
         self.packet_size = packet_size
         self.icmp_type = int(icmp_type) if icmp_type is not None else None
         self.classtype = classtype or "misc-activity"
+        self.category_type = category_type or []
         self.priority = int(priority) if priority is not None else 3
         self.sameip = bool(sameip)
         self.raw_rule = raw_rule
-        self.attack_type = attack_type
         # Configure contents list
         if contents is not None:
             self.contents = contents
@@ -199,7 +199,7 @@ def parse_rule(line: str) -> Optional[Rule]:
     packet_size = None
     icmp_type = None
     classtype = "misc-activity"
-    attack_type = None
+    category_type = []
     priority = 3
     sameip = False
     contents: List[ContentCondition] = []
@@ -271,8 +271,12 @@ def parse_rule(line: str) -> Optional[Rule]:
         elif key in ("classtype", "category"):
             classtype = val.strip('"')
 
-        elif key == "attack_type":
-            attack_type = val.strip('"')
+        elif key == "category_type":
+            category_type = [
+            item.strip()
+            for item in val.strip('"').split(",")
+            if item.strip()
+    ]
 
         elif key in ("priority", "severity"):
             try:
@@ -315,7 +319,7 @@ def parse_rule(line: str) -> Optional[Rule]:
         packet_size=packet_size,
         icmp_type=icmp_type,
         classtype=classtype,
-        attack_type=attack_type,
+        category_type=category_type, 
         priority=priority,
         sameip=sameip,
         raw_rule=line
