@@ -1228,7 +1228,7 @@ Write-Host ""
 # Write-Host ""
 # Write-Host "[2/6] Checking IDSIPS runtime..." -ForegroundColor Yellow
 
-# $RuntimePython = Join-Path $RuntimePath "python.exe"
+# $RuntimePython = Join-Path $RuntimePath "Scripts\python.exe"
 
 # if (-not (Test-Path $RuntimePython)) {
 
