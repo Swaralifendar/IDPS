@@ -18,7 +18,7 @@ class Alert:
         self.msg = rule.msg
         self.action = rule.action
         self.classtype = rule.classtype
-        self.attack_type = rule.attack_type
+        self.category_type = rule.category_type
         self.priority = rule.priority
         self.protocol = event.protocol
         self.source_ip = event.source_ip
@@ -77,8 +77,8 @@ class Alert:
                 "rev": self.rev,
                 "signature": self.msg,
                 "category": self.classtype,
+                "category_type": self.category_type,
                 "severity": self.priority,
-                "attack_type": self.attack_type,
                 "sid": self.sid,
                 "msg": self.msg
             },

@@ -12,7 +12,7 @@ from rules_engine import RulesEngine
 # Paths
 nids_dir = Path(__file__).resolve().parent
 rules_path = nids_dir / "rules" / "nids.rules"
-eve_path = nids_dir / "EVE.json"
+alerts_path = nids_dir / "alerts.json"
 config_path = nids_dir / "config.yml"
 
 
@@ -114,8 +114,8 @@ def is_home_net(ip):
     return any(address in network for network in home_nets)
 
 
-# Create EVE.json if it does not exist
-eve_path.touch(exist_ok=True)
+# Create alerts.json if it does not exist
+alerts_path.touch(exist_ok=True)
 
 
 # Initialize detection engine
@@ -124,8 +124,8 @@ engine = RulesEngine(rules_path, debug=False)
 print("=" * 80)
 print(f"[*] RulesEngine: Loaded {len(engine.rules)} detection rules from '{rules_path.name}'")
 print("[+] NIDS live traffic capture started with PyDivert/WinDivert")
-print(f"[*] All captured traffic is logged to '{eve_path.name}'")
-print("[*] Matching traffic will contain an 'alert' field")
+print(f"[*] Only matching alerts are logged to '{alerts_path.name}'")
+print("[*] Non-alert traffic is not written to the alert log")
 print("=" * 80 + "\n")
 
 
@@ -188,16 +188,15 @@ with pydivert.WinDivert(windivert_filter) as w:
         # TrafficEvent -> RulesEngine -> Alerts
         alerts = engine.match(event)
 
-        # TrafficEvent -> EVE JSON
-        eve_entry = traffic_event_to_eve(event, alerts)
-
-        # Write EVERY packet/event to EVE.json
-        with open(eve_path, "a", encoding="utf-8") as f:
-            json.dump(eve_entry, f, separators=(",", ":"))
-            f.write("\n")
-
-        # Print ONLY actual alerts in PowerShell
         for alert in alerts:
+            alert_entry = alert.to_eve_dict()
+
+            with open(alerts_path, "a", encoding="utf-8") as f:
+                json.dump(alert_entry, f, separators=(",", ":"))
+                f.write("\n")
+                f.flush()
+
+            # Print alert in PowerShell
             print(alert)
 
         # Reinject packet normally
