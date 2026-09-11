@@ -163,7 +163,7 @@ def traffic_event_to_eve(event, alerts):
     entry = {
         "timestamp": event.timestamp,
         "event_type": "traffic",
-         "sensor_type": "NIDS",
+        "sensor_type": "NIDS",
         "direction": event.direction,
         "src_ip": event.source_ip,
         "src_port": event.source_port,
