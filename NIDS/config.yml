@@ -4,8 +4,5 @@ network:
 
   INTERFACES:
     - name: "Wi-Fi"
-      index: 30
 
     - name: "Ethernet"
-      index: 18
-    

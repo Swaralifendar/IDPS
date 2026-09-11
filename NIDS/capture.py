@@ -34,6 +34,7 @@ if not interfaces:
 
 
 # Get currently connected interfaces from Windows
+# Resolve configured interface names to their current Windows indexes
 result = subprocess.run(
     [
         "powershell",
@@ -41,29 +42,48 @@ result = subprocess.run(
         "-Command",
         "Get-NetAdapter | "
         "Where-Object {$_.Status -eq 'Up'} | "
-        "Select-Object -ExpandProperty ifIndex"
+        "Select-Object Name, ifIndex | "
+        "ConvertTo-Json -Compress"
     ],
     capture_output=True,
     text=True,
     check=True
 )
 
-active_interface_indexes = {
-    int(line.strip())
-    for line in result.stdout.splitlines()
-    if line.strip().isdigit()
+output = result.stdout.strip()
+
+if not output:
+    raise RuntimeError("No active network interfaces found.")
+
+active_adapters = json.loads(output)
+
+# If only one adapter is returned, PowerShell returns an object
+# instead of a list.
+if isinstance(active_adapters, dict):
+    active_adapters = [active_adapters]
+
+# Map interface name -> current Windows interface index
+adapter_indexes = {
+    adapter["Name"]: int(adapter["ifIndex"])
+    for adapter in active_adapters
 }
 
+# Match configured interface names with currently active adapters
+active_interfaces = []
 
-# Keep only configured interfaces that are currently connected
-active_interfaces = [
-    interface
-    for interface in interfaces
-    if interface["index"] in active_interface_indexes
-]
+for interface in interfaces:
+    name = interface["name"]
+
+    if name in adapter_indexes:
+        active_interfaces.append({
+            "name": name,
+            "index": adapter_indexes[name]
+        })
 
 if not active_interfaces:
-    raise RuntimeError("No configured network interfaces are currently connected.")
+    raise RuntimeError(
+        "None of the configured network interfaces are currently connected."
+    )
 
 
 # Build WinDivert interface filter
