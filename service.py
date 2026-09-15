@@ -31,7 +31,8 @@ class IDSIPSService(win32serviceutil.ServiceFramework):
 
         # Python interpreter used by the service
         self.python_executable = (
-            Path(sys.executable).resolve().parent / "python.exe"
+            Path(__file__).resolve().parent / "runtime" / "python.exe"
+            # Path(sys.executable).resolve().parent / "python.exe"
         )
 
     def start_nids_worker(self, logger):
