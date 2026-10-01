@@ -1,8 +1,14 @@
-# Python virtual environment
+# Python virtual environments
 .venv/
 NIDS/.venv/
+
 # Project runtime
 runtime/
+
+# Runtime-generated files
+NIDS/EVE.json
+NIDS/alerts.json
+alert_manager/correlation.json
 
 # Logs
 logs/
@@ -20,5 +26,15 @@ __pycache__/
 dist/
 build/
 
-# Environment/secrets
+# Environment / secrets
 .env
+.env.*
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Temporary / backup files
+*.tmp
+*.bak
+NIDS/alert_manager_nids_checkpoint.json

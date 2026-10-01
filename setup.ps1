@@ -127,9 +127,17 @@ if (-not $ExistingService) {
     Write-Host "IDSIPS service installed." -ForegroundColor Green
 }
 else {
-    Write-Host "IDSIPS service already exists." -ForegroundColor Green
-}
 
+    Write-Host "IDSIPS service already exists. Updating service..."
+
+    & $RuntimePython "$ProjectRoot\service.py" update
+
+    if ($LASTEXITCODE -ne 0) {
+        throw "IDSIPS service update failed."
+    }
+
+    Write-Host "IDSIPS service updated." -ForegroundColor Green
+}
 
 # ------------------------------------------------------------
 # 6. Start and verify service

@@ -1,0 +1,131 @@
+# ==============================================================================
+# NIDS Custom Intrusion Detection Rules
+# Format: action protocol src_ip src_port direction dst_ip dst_port (options)
+# ==============================================================================
+
+
+# ==============================================================================
+# PART 1: SIGNATURE-BASED DETECTION RULES
+# Looks for known/specific malicious strings, byte sequences, exploit signatures,
+# scanner identifiers, webshell patterns, and C2 communication.
+# ==============================================================================
+
+# ------------------------------------------------------------------------------
+# 1. Baseline Test Rules
+# ------------------------------------------------------------------------------
+alert tcp any any -> any 80 (msg:"Test HTTP Traffic"; content:"GET"; category_type:"BENIGN_TEST";sid:100001; rev:1;)
+
+# ------------------------------------------------------------------------------
+# 2. Web Application Attacks & Injection Signatures
+# ------------------------------------------------------------------------------
+alert tcp any any -> any [80,8080,443] (msg:"Web Attack - SQL Injection UNION SELECT Attempt"; content:"UNION"; nocase; content:"SELECT"; nocase; classtype:web-application-attack; priority:1; category_type:"EXPLOIT";sid:100002; rev:1;)
+alert tcp any any -> any [80,8080,443] (msg:"Web Attack - SQL Injection OR 1=1 Authentication Bypass"; content:"' OR '1'='1"; nocase; classtype:web-application-attack; priority:1; category_type:"EXPLOIT";sid:100003; rev:1;)
+alert tcp any any -> any [80,8080,443] (msg:"Web Attack - SQL Injection Time-Based Blind SLEEP()"; content:"SLEEP("; nocase; classtype:web-application-attack; priority:1; category_type:"EXPLOIT";sid:100004; rev:1;)
+alert tcp any any -> any [80,8080,443] (msg:"Web Attack - Cross-Site Scripting <script> Tag Injection"; content:"<script"; nocase; classtype:web-application-attack; priority:1; category_type:"EXPLOIT";sid:100005; rev:1;)
+alert tcp any any -> any [80,8080,443] (msg:"Web Attack - Cross-Site Scripting Javascript URI / Event Handler"; content:"javascript:"; nocase; classtype:web-application-attack; priority:1; category_type:"EXPLOIT";sid:100006; rev:1;)
+alert tcp any any -> any [80,8080,443] (msg:"Web Attack - Cross-Site Scripting Image onerror Payload"; content:"<img"; nocase; content:"onerror="; nocase; classtype:web-application-attack; priority:1; category_type:"EXPLOIT";sid:100007; rev:1;)
+alert tcp any any -> any [80,8080,443] (msg:"Web Attack - Linux Path Traversal Attempt (/etc/passwd)"; content:"/etc/passwd"; nocase; classtype:web-application-attack; priority:1; category_type:"EXPLOIT";sid:100008; rev:1;)
+alert tcp any any -> any [80,8080,443] (msg:"Web Attack - Linux Path Traversal Attempt (/etc/shadow)"; content:"/etc/shadow"; nocase; classtype:web-application-attack; priority:1; category_type:"EXPLOIT";sid:100009; rev:1;)
+alert tcp any any -> any [80,8080,443] (msg:"Web Attack - Windows Path Traversal Attempt (..\windows\win.ini)"; content:"..\windows\win.ini"; nocase; classtype:web-application-attack; priority:1; category_type:"EXPLOIT";sid:100010; rev:1;)
+alert tcp any any -> any [80,8080,443] (msg:"Web Attack - Windows Path Traversal Attempt (..\boot.ini)"; content:"..\boot.ini"; nocase; classtype:web-application-attack; priority:1; category_type:"EXPLOIT";sid:100011; rev:1;)
+alert tcp any any -> any [80,8080,443] (msg:"Web Attack - Remote Command Execution (/bin/sh Invocation)"; content:"/bin/sh"; nocase; classtype:web-application-attack; priority:1; category_type:"EXPLOIT";sid:100012; rev:1;)
+alert tcp any any -> any [80,8080,443] (msg:"Web Attack - Remote Command Execution (/bin/bash Invocation)"; content:"/bin/bash"; nocase; classtype:web-application-attack; priority:1; category_type:"EXPLOIT";sid:100013; rev:1;)
+alert tcp any any -> any [80,8080,443] (msg:"Web Attack - PHP Webshell Obfuscated eval(base64_decode) Execution"; content:"eval(base64_decode"; nocase; classtype:web-application-attack; priority:1; category_type:"EXPLOIT,PERSISTENCE";sid:100014; rev:1;)
+alert tcp any any -> any [80,8080,443] (msg:"Web Attack - PHP Webshell Command Passthru ($__POST)"; content:"passthru($_POST"; nocase; classtype:web-application-attack; priority:1; category_type:"EXPLOIT,PERSISTENCE";sid:100015; rev:1;)
+alert tcp any any -> any [80,8080,443] (msg:"Web Attack - Log4j JNDI Remote Code Execution Exploit Attempt"; content:"${jndi:"; nocase; classtype:exploit; priority:1; category_type:"EXPLOIT";sid:100016; rev:1;)
+alert tcp any any -> any [80,8080,443] (msg:"Web Attack - Spring4Shell ClassLoader RCE Payload Detected"; content:"class.module.classLoader"; nocase; classtype:exploit; priority:1; category_type:"EXPLOIT";sid:100017; rev:1;)
+alert tcp any any -> any [80,8080,443] (msg:"Web Attack - Server-Side Template Injection Expression (${7*7})"; content:"${7*7}"; classtype:web-application-attack; priority:2; category_type:"EXPLOIT";sid:100018; rev:1;)
+
+# ------------------------------------------------------------------------------
+# 3. Web Reconnaissance & Automated Vulnerability Scanners
+# ------------------------------------------------------------------------------
+alert tcp any any -> any [80,8080,443] (msg:"Reconnaissance - Automated sqlmap SQL Injection Scanner Detected"; content:"User-Agent:"; nocase; content:"sqlmap"; nocase; classtype:web-application-attack; priority:2; category_type:"RECON";sid:100019; rev:1;)
+alert tcp any any -> any [80,8080,443] (msg:"Reconnaissance - Nikto Web Vulnerability Scanner Detected"; content:"User-Agent:"; nocase; content:"Nikto"; nocase; classtype:web-application-attack; priority:2; category_type:"RECON";sid:100020; rev:1;)
+alert tcp any any -> any [80,8080,443] (msg:"Reconnaissance - DirBuster Directory Brute-Force Scanner Detected"; content:"User-Agent:"; nocase; content:"DirBuster"; nocase; classtype:web-application-attack; priority:2; category_type:"RECON";sid:100021; rev:1;)
+alert tcp any any -> any [80,8080,443] (msg:"Reconnaissance - Gobuster Web Enumeration Scanner Detected"; content:"User-Agent:"; nocase; content:"gobuster"; nocase; classtype:web-application-attack; priority:2; category_type:"RECON";sid:100022; rev:1;)
+alert tcp any any -> any [80,8080,443] (msg:"Reconnaissance - Wfuzz Web Fuzzer Activity Detected"; content:"User-Agent:"; nocase; content:"Wfuzz"; nocase; classtype:web-application-attack; priority:2; category_type:"RECON";sid:100023; rev:1;)
+alert tcp any any -> any [80,8080,443] (msg:"Reconnaissance - Nmap Scripting Engine (NSE) HTTP Probe Detected"; content:"User-Agent:"; nocase; content:"Nmap NSE"; nocase; classtype:web-application-attack; priority:2; category_type:"RECON";sid:100024; rev:1;)
+
+# ------------------------------------------------------------------------------
+# 4. Malware Activity, Reverse Shells & C2 Communication
+# ------------------------------------------------------------------------------
+alert tcp any any -> any any (msg:"Malware Activity - PowerShell Encoded Command Execution Detected"; content:"powershell"; nocase; content:"-enc"; nocase; classtype:trojan-activity; priority:1; category_type:"EXPLOIT,C2";sid:100025; rev:1;)
+alert tcp any any -> any any (msg:"Malware Activity - Windows Command Shell Execution (cmd.exe /c)"; content:"cmd.exe /c"; nocase; classtype:trojan-activity; priority:1; category_type:"C2";sid:100026; rev:1;)
+alert tcp any any -> any 4444 (msg:"Malware Activity - Metasploit Default Handler Port 4444 Traffic"; classtype:trojan-activity; priority:1; category_type:"C2";sid:100027; rev:1;)
+alert tcp any any -> any any (msg:"Malware Activity - Meterpreter PE Header Reverse TCP Stage"; content:"|4d 5a 90 00|"; classtype:trojan-activity; priority:1; category_type:"C2,MALWARE";sid:100028; rev:1;)
+alert tcp any any -> any any (msg:"Malware Activity - Cobalt Strike Default C2 Check-in URI"; content:"/submit.php?id="; nocase; classtype:trojan-activity; priority:1; category_type:"C2";sid:100029; rev:1;)
+alert tcp any any -> any any (msg:"Malware Activity - Interactive Bash Reverse Shell Stream"; content:"/bin/sh -i"; nocase; content:"/dev/tcp/"; nocase; classtype:trojan-activity; priority:1; category_type:"C2";sid:100030; rev:1;)
+
+# ------------------------------------------------------------------------------
+# 5. Protocol Exploits, Database Abuse & Unauthorized Access
+# ------------------------------------------------------------------------------
+alert tcp any any -> any 445 (msg:"Exploit Attempt - SMB SAMR Named Pipe Impersonation Access"; content:"\PIPE\samr"; nocase; classtype:exploit; priority:1; category_type:"EXPLOIT,LATERAL_MOVEMENT";sid:100036; rev:1;)
+alert tcp any any -> any 6379 (msg:"Database Abuse - Unauthorized Redis Remote CONFIG SET Command"; content:"CONFIG"; nocase; content:"SET"; nocase; classtype:exploit; priority:1; category_type:"EXPLOIT";sid:100037; rev:1;)
+alert tcp any any -> any 9200 (msg:"Database Abuse - Elasticsearch Remote Script Execution Attempt"; content:"_search"; nocase; content:"script"; nocase; classtype:exploit; priority:1; category_type:"EXPLOIT";sid:100038; rev:1;)
+alert tcp any any -> any 21 (msg:"Protocol Abuse - FTP Unauthorized Root Login Attempt"; content:"USER root"; nocase; classtype:policy-violation; priority:2; category_type:"UNAUTHORIZED_ACCESS";sid:100039; rev:1;)
+alert tcp any any -> any 23 (msg:"Protocol Abuse - Telnet Default Root Authentication Prompt"; content:"login: root"; nocase; classtype:policy-violation; priority:2; category_type:"UNAUTHORIZED_ACCESS";sid:100040; rev:1;)
+
+# ------------------------------------------------------------------------------
+# 6. Specific Malware DNS & Covert Channel Signatures
+# ------------------------------------------------------------------------------
+alert udp any any -> any 53 (msg:"Malware Activity - WannaCry Ransomware Killswitch Domain DNS Query"; content:"ifferfsodp9ifjpxfryica"; nocase; classtype:trojan-activity; priority:1; category_type:"MALWARE";sid:100041; rev:1;)
+alert icmp any any -> any any (msg:"Network Anomaly - ICMP Echo Request Covert Channel Signature"; content:"|00 01 02 03 04 05 06 07|"; classtype:network-anomaly; priority:3; category_type:"C2,EXFILTRATION";sid:100044; rev:1;)
+
+
+# ==============================================================================
+# PART 2: PATTERN-BASED DETECTION RULES
+# Looks for suspicious characteristics, unusual flag combinations, abnormal sizes,
+# protocol anomalies, and network structural violations in individual TrafficEvents.
+# ==============================================================================
+
+# ------------------------------------------------------------------------------
+# A. TCP Control Flag & State Anomalies
+# ------------------------------------------------------------------------------
+alert tcp any any -> any any (msg:"TCP Flag Anomaly - TCP Null Scan Detected (Zero Control Flags)"; flags:0; classtype:network-scan; priority:2; category_type:"RECON";sid:100031; rev:1;)
+alert tcp any any -> any any (msg:"TCP Flag Anomaly - TCP Xmas Scan Detected (FIN+PSH+URG Control Flags)"; flags:FPU; classtype:network-scan; priority:2; category_type:"RECON";sid:100032; rev:2;)alert tcp any any -> any any (msg:"TCP Flag Anomaly - TCP SYN-FIN Scan Detected (Invalid Control Combination)"; flags:SF; classtype:network-scan; priority:2; category_type:"RECON";sid:100033; rev:1;)
+alert tcp any any -> any any (msg:"TCP Flag Anomaly - TCP Stealth FIN Scan (FIN Flag Set without ACK)"; flags:F,!A; classtype:network-scan; priority:3; category_type:"RECON";sid:100034; rev:1;)
+alert tcp any any -> any any (msg:"TCP Flag Anomaly - SYN-RST Invalid Control Combination Set"; flags:SR; classtype:network-scan; priority:2; category_type:"NETWORK_ANOMALY";sid:100045; rev:1;)
+alert tcp any any -> any any (msg:"TCP Flag Anomaly - FIN-RST Invalid Control Combination Set"; flags:FR; classtype:network-scan; priority:2; category_type:"NETWORK_ANOMALY";sid:100046; rev:1;)
+alert tcp any any -> any any (msg:"TCP Flag Anomaly - SYN-PSH Invalid Handshake Combination Set"; flags:SP; classtype:network-scan; priority:2; category_type:"NETWORK_ANOMALY";sid:100047; rev:1;)
+
+# ------------------------------------------------------------------------------
+# B. TCP Protocol, Payload & Port Anomalies
+# ------------------------------------------------------------------------------
+alert tcp any any -> any any (msg:"TCP Protocol Anomaly - RST Packet Carrying Unexpected Payload Data"; flags:R; dsize:>0; classtype:protocol-anomaly; priority:2; category_type:"NETWORK_ANOMALY";sid:100048; rev:1;)
+alert tcp any any -> any any (msg:"TCP Protocol Anomaly - Initial SYN Packet with Abnormally Large Payload"; flags:S,!A; dsize:>500; classtype:protocol-anomaly; priority:2; category_type:"NETWORK_ANOMALY";sid:100049; rev:1;)
+alert tcp any any -> any any (msg:"TCP Handshake Anomaly - SYN-ACK Packet Carrying Large Data Payload"; flags:SA; dsize:>200; classtype:protocol-anomaly; priority:2; category_type:"NETWORK_ANOMALY";sid:100050; rev:1;)
+alert tcp any any -> any 0 (msg:"TCP Port Anomaly - Traffic Destined to Reserved TCP Port 0"; classtype:protocol-anomaly; priority:2; category_type:"NETWORK_ANOMALY";sid:100051; rev:1;)
+alert tcp any 0 -> any any (msg:"TCP Port Anomaly - Traffic Originating from Reserved TCP Port 0"; classtype:protocol-anomaly; priority:2; category_type:"NETWORK_ANOMALY";sid:100052; rev:1;)
+
+# ------------------------------------------------------------------------------
+# C. UDP Protocol, Size & Service Anomalies
+# ------------------------------------------------------------------------------
+alert udp any any <> any 53 (msg:"UDP Network Anomaly - Abnormally Large DNS Packet (Potential Amplification/Tunneling)"; dsize:>512; classtype:network-anomaly; priority:2; category_type:"NETWORK_ANOMALY,EXFILTRATION";sid:100042; rev:1;)
+alert udp any any -> any 0 (msg:"UDP Port Anomaly - Traffic Destined to Reserved UDP Port 0"; classtype:protocol-anomaly; priority:2; category_type:"NETWORK_ANOMALY";sid:100053; rev:1;)
+alert udp any 0 -> any any (msg:"UDP Port Anomaly - Traffic Originating from Reserved UDP Port 0"; classtype:protocol-anomaly; priority:2; category_type:"NETWORK_ANOMALY";sid:100054; rev:1;)
+alert udp any any -> any 53 (msg:"UDP Protocol Anomaly - Zero-Payload Empty UDP DNS Packet"; dsize:0; classtype:protocol-anomaly; priority:3; category_type:"NETWORK_ANOMALY";sid:100055; rev:1;)
+alert udp any any -> any 161 (msg:"UDP Protocol Anomaly - Zero-Payload Empty UDP SNMP Probe"; dsize:0; classtype:protocol-anomaly; priority:3; category_type:"NETWORK_ANOMALY";sid:100056; rev:1;)
+alert udp any any -> any [17,19] (msg:"UDP Service Abuse - Obsolete Chargen/QOTD Amplification Vector Traffic"; classtype:misc-activity; priority:2; category_type:"DOS";sid:100057; rev:1;)
+alert udp any any -> any any (msg:"UDP Protocol Anomaly - Abnormally Large UDP Datagram Exceeding Standard Ethernet MTU"; dsize:>1472; classtype:protocol-anomaly; priority:3; category_type:"NETWORK_ANOMALY";sid:100058; rev:1;)
+
+# ------------------------------------------------------------------------------
+# D. ICMP Protocol & Payload Anomalies
+# ------------------------------------------------------------------------------
+alert icmp any any -> any any (msg:"ICMP Network Anomaly - Oversized ICMP Echo Payload (Potential Ping of Death or Tunneling)"; dsize:>1000; classtype:network-anomaly; priority:2; category_type:"NETWORK_ANOMALY,DOS";sid:100043; rev:1;)
+alert icmp any any -> any any (msg:"ICMP Protocol Anomaly - Zero-Payload ICMP Echo Probe (Rapid Sweep)"; dsize:0; classtype:network-scan; priority:3; category_type:"RECON";sid:100059; rev:1;)
+alert icmp any any -> any any (msg:"ICMP Packet Size Anomaly - Abnormally Large ICMP Packet Header Size"; packet_size:>1400; classtype:network-anomaly; priority:2; category_type:"NETWORK_ANOMALY";sid:100060; rev:1;)
+
+# ------------------------------------------------------------------------------
+# E. Suspicious Network Services & Perimeter Egress Policy Anomalies
+# ------------------------------------------------------------------------------
+alert tcp [192.168.0.0/16,10.0.0.0/8,172.16.0.0/12] any -> ![192.168.0.0/16,10.0.0.0/8,172.16.0.0/12] [139,445] (msg:"Network Policy Violation - Outbound SMB/CIFS Traffic to External Network"; classtype:policy-violation; priority:1; category_type:"EXFILTRATION,POLICY_VIOLATION";sid:100061; rev:1;)
+alert tcp [192.168.0.0/16,10.0.0.0/8,172.16.0.0/12] any -> ![192.168.0.0/16,10.0.0.0/8,172.16.0.0/12] [389,636,88] (msg:"Network Policy Violation - Outbound LDAP/Kerberos Active Directory Traffic to External Network"; classtype:policy-violation; priority:1; category_type:"POLICY_VIOLATION";sid:100062; rev:1;)
+alert tcp any any -> any [6666,6667,6668,6669] (msg:"Suspicious Service - Unencrypted IRC Protocol Port Traffic (Potential Botnet C2)"; classtype:trojan-activity; priority:2; category_type:"C2";sid:100063; rev:1;)
+alert tcp any any -> any [31337,12345,27374] (msg:"Suspicious Service - Legacy Trojan Backdoor Default Port Traffic"; classtype:trojan-activity; priority:1; category_type:"C2";sid:100064; rev:1;)
+
+# ------------------------------------------------------------------------------
+# F. Header Structural & Host Impersonation Anomalies
+# ------------------------------------------------------------------------------
+alert ip any any -> any any (msg:"IP Protocol Anomaly - LAND Attack Signature (Identical Source and Destination IP and Port)"; sameip:true; classtype:bad-unknown; priority:1; category_type:"DOS";sid:100065; rev:1;)
+
+alert icmp any any -> any any (msg:"ICMP Echo Request Detected"; icmp_type:8; category_type:"RECON";sid:100066; rev:1; classtype:network-scan; priority:2;)
