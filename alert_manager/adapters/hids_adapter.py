@@ -89,7 +89,7 @@ class HIDSAdapter:
                     self._save_checkpoint(current_offset)
                     continue
 
-                alerts.append(self.normalize_alert(event).to_dict())
+                alerts.append(self.normalize_alert(event))
 
                 self._save_checkpoint(current_offset)
 
@@ -117,7 +117,7 @@ class HIDSAdapter:
                 []
             ),
             
-            source_ip=event.get("source_ip"),
+            source_ip=event.get("source_ip") or (event.get("event_data", {}).get("IpAddress") if event.get("event_data", {}).get("IpAddress") not in ("-", "", None) else None),
             destination_ip=event.get("destination_ip"),
             source_port=event.get("source_port"),
             destination_port=event.get("destination_port"),

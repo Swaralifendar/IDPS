@@ -85,6 +85,11 @@ class Alert:
             "direction": self.direction,
             "packet_size": getattr(self.event, "packet_size", None),
             "payload_size": getattr(self.event, "payload_size", None),
+            "payload": (
+                self.event.payload.hex()
+                if getattr(self.event, "payload", None)
+                else ""
+            ),
         }
 
     def to_eve_json(self) -> str:

@@ -23,10 +23,13 @@ BASE_DIR = Path(__file__).resolve().parent
 LOG_DIR = BASE_DIR / "logs"
 LOG_DIR.mkdir(exist_ok=True)
 
-# The ONLY persistent HIDS logging file
+# Persistent HIDS event logging file
 EVENT_JSON_FILE = LOG_DIR / "event.json"
-JSON_LOG_FILE = EVENT_JSON_FILE  # Compatibility alias
-LOG_FILE = EVENT_JSON_FILE       # Compatibility alias (points to event.json, not idsips.log)
+JSON_LOG_FILE = EVENT_JSON_FILE
+LOG_FILE = EVENT_JSON_FILE
+
+# Windows service lifecycle log
+SERVICE_LOG_FILE = LOG_DIR / "idsips.log"
 
 # Indian Standard Time (IST) timezone
 IST = timezone(timedelta(hours=5, minutes=30), name="Asia/Kolkata")
@@ -343,17 +346,50 @@ def format_correlated_alert(alert: Any) -> str:
     )
 
 
-def get_logger(log_file: Optional[Union[str, Path]] = None) -> logging.Logger:
+def get_logger(
+    log_file: Optional[Union[str, Path]] = None
+) -> logging.Logger:
     """
-    Return the IDSIPS logger with console handler only (no text log files).
+    Return the IDSIPS service logger.
+
+    Service lifecycle messages are written to logs/idsips.log
+    and also displayed in the console.
     """
+
     logger = logging.getLogger("IDSIPS")
+
+    # Prevent duplicate handlers
     if logger.handlers:
         return logger
 
     logger.setLevel(logging.INFO)
-    handler = logging.StreamHandler(sys.stdout)
-    formatter = logging.Formatter("%(asctime)s | %(levelname)s | %(message)s")
-    handler.setFormatter(formatter)
-    logger.addHandler(handler)
+    logger.propagate = False
+
+    # --------------------------------------------------------
+    # File handler - logs/idsips.log
+    # --------------------------------------------------------
+    target_file = Path(log_file) if log_file else SERVICE_LOG_FILE
+    target_file.parent.mkdir(parents=True, exist_ok=True)
+
+    file_handler = logging.FileHandler(
+        target_file,
+        mode="a",
+        encoding="utf-8"
+    )
+
+    formatter = logging.Formatter(
+        "%(asctime)s | %(levelname)s | %(message)s",
+        datefmt="%Y-%m-%d %H:%M:%S"
+    )
+
+    file_handler.setFormatter(formatter)
+    logger.addHandler(file_handler)
+
+    # --------------------------------------------------------
+    # Console handler
+    # --------------------------------------------------------
+    console_handler = logging.StreamHandler(sys.stdout)
+    console_handler.setFormatter(formatter)
+    logger.addHandler(console_handler)
+
     return logger
