@@ -14,8 +14,7 @@ from typing import List, Optional, Set, Union
 
 
 # Default path to hids.rules in project root
-DEFAULT_RULES_FILE = Path(__file__).resolve().parent.parent / "hids.rules"
-
+DEFAULT_RULES_FILE = Path(__file__).resolve().parent / "hids.rules"
 
 @dataclass
 class Rule:

@@ -2508,6 +2508,199 @@ class IPSEngine:
     # PROCESS ONE CORRELATION EVENT
     # ========================================================
 
+        # ========================================================
+    # INLINE PACKET EVALUATION
+    # ========================================================
+
+    def evaluate_inline(
+        self,
+        traffic_event,
+        nids_alerts
+    ) -> List[IPSDecision]:
+        """
+        Evaluate the current packet against existing IPS BLOCK rules.
+
+        This method is used by the inline NIDS path.
+
+        It does NOT replace process_correlation().
+        It only evaluates BLOCK rules synchronously for
+        the current packet before it is reinjected.
+
+        BLOCK still requires:
+            IDS detection
+            AND
+            IPS rule conditions
+            AND
+            configured indicator-list match
+        """
+
+        decisions: List[IPSDecision] = []
+
+        # ----------------------------------------------------
+        # No NIDS alert means there is no IDS detection
+        # for an IPS BLOCK rule to validate.
+        # ----------------------------------------------------
+
+        if not nids_alerts:
+            return decisions
+
+        # ----------------------------------------------------
+        # Evaluate every NIDS alert independently.
+        # ----------------------------------------------------
+
+        for alert in nids_alerts:
+
+            # ------------------------------------------------
+            # Build the normalized event expected by the
+            # existing IPS rule-matching functions.
+            # ------------------------------------------------
+
+            event = {
+                "event_type": "alert",
+                "sensor": "NIDS",
+
+                # NIDS rule SID becomes the detection ID.
+                "detection_id": str(
+                    getattr(
+                        alert,
+                        "sid",
+                        ""
+                    )
+                ),
+
+                "timestamp": getattr(
+                    alert,
+                    "timestamp",
+                    None
+                ),
+
+                "source_ip": traffic_event.source_ip,
+                "destination_ip": traffic_event.destination_ip,
+
+                "source_port": traffic_event.source_port,
+                "destination_port": traffic_event.destination_port,
+
+                "protocol": traffic_event.protocol,
+
+                "tcp_flags": traffic_event.tcp_flags,
+
+                "payload": traffic_event.payload,
+
+                "category_type": (
+                    getattr(
+                        alert,
+                        "category_type",
+                        []
+                    )
+                ),
+
+                "severity": getattr(
+                    alert,
+                    "severity",
+                    None
+                ),
+
+                "message": getattr(
+                    alert,
+                    "msg",
+                    None
+                ),
+
+                "raw": {
+                    "proto": traffic_event.protocol,
+                    "src_ip": traffic_event.source_ip,
+                    "dst_ip": traffic_event.destination_ip,
+                    "src_port": traffic_event.source_port,
+                    "dst_port": traffic_event.destination_port,
+                    "tcp_flags": traffic_event.tcp_flags,
+                    "payload": traffic_event.payload,
+                },
+            }
+
+            # ------------------------------------------------
+            # Try ONLY BLOCK rules.
+            #
+            # DETECT / PASS / RECOMMEND rules continue to
+            # operate through the existing correlation path.
+            # ------------------------------------------------
+
+            for rule in self.rules:
+
+                if rule.action != "block":
+                    continue
+
+                # ------------------------------------------------
+                # Correlation-only conditions cannot be evaluated
+                # from one packet.
+                #
+                # Therefore fail closed if a BLOCK rule requires
+                # correlation event count or correlation severity.
+                # ------------------------------------------------
+
+                if (
+                    "min_events"
+                    in rule.options
+                ):
+                    continue
+
+                if (
+                    "severity_at_least"
+                    in rule.options
+                ):
+                    continue
+
+                # ------------------------------------------------
+                # Reuse the EXISTING IPS rule validation.
+                #
+                # This preserves:
+                #   - sensor validation
+                #   - detection ID validation
+                #   - protocol validation
+                #   - IP validation
+                #   - port validation
+                #   - TCP flag validation
+                #   - payload validation
+                #   - indicator-list validation
+                # ------------------------------------------------
+
+                matched, matched_indicator = (
+                    self._rule_matches(
+                        rule,
+                        event
+                    )
+                )
+
+                if not matched:
+                    continue
+
+                # ------------------------------------------------
+                # Create the normal IPS decision object.
+                # ------------------------------------------------
+
+                decision = self._create_decision(
+                    rule,
+                    event,
+                    matched_indicator
+                )
+
+                # Mark this decision as coming from the
+                # inline packet path.
+                decision.source = "INLINE"
+
+                decision.metadata[
+                    "inline"
+                ] = True
+
+                decision.metadata[
+                    "validation"
+                ] = "ALL_REQUIRED_CONDITIONS_MATCHED"
+
+                decisions.append(
+                    decision
+                )
+
+        return decisions
+
     def process_correlation(
         self,
         correlation_event: Dict[str, Any]

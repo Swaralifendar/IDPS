@@ -78,32 +78,34 @@ Write-Host "Python runtime verified." -ForegroundColor Green
 
 
 # ------------------------------------------------------------
-# 4. Install / verify pywin32
+# 4. Install / verify project dependencies
 # ------------------------------------------------------------
 
 Write-Host ""
-Write-Host "[4/6] Checking pywin32..." -ForegroundColor Yellow
+Write-Host "[4/6] Checking project dependencies..." -ForegroundColor Yellow
 
-$PyWin32Check = & $RuntimePython -c "import win32service, win32serviceutil; print('OK')" 2>$null
+$RequirementsFile = Join-Path $ProjectRoot "requirements.txt"
 
-if ($PyWin32Check -ne "OK") {
-
-    Write-Host "pywin32 not found. Installing..."
-
-    & $RuntimePython -m pip install pywin32
-
-    $PyWin32Check = & $RuntimePython -c "import win32service, win32serviceutil; print('OK')" 2>$null
-
-    if ($PyWin32Check -ne "OK") {
-        throw "pywin32 installation failed."
-    }
-
-    Write-Host "pywin32 installed successfully." -ForegroundColor Green
-}
-else {
-    Write-Host "pywin32 already installed." -ForegroundColor Green
+if (-not (Test-Path $RequirementsFile)) {
+    throw "requirements.txt not found."
 }
 
+Write-Host "Installing project dependencies..."
+
+& $RuntimePython -m pip install -r $RequirementsFile
+
+if ($LASTEXITCODE -ne 0) {
+    throw "Dependency installation failed."
+}
+
+# Verify critical dependencies
+& $RuntimePython -c "import win32service, win32serviceutil, win32evtlog, yaml, pydivert; print('All dependencies OK')"
+
+if ($LASTEXITCODE -ne 0) {
+    throw "Dependency verification failed."
+}
+
+Write-Host "All project dependencies verified." -ForegroundColor Green
 
 # ------------------------------------------------------------
 # 5. Install / update Windows Service
