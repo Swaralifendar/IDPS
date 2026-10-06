@@ -31,11 +31,16 @@ INDICATORS = {
 
 "malicious_payload_signatures": {
     # High-confidence strings associated with malware
-    # / malware delivery.
-    "${jndi:",
-    "powershell -enc",
+    # / malware delivery. Used by BLOCK rules 330005
+    # (NIDS 100025) and 330007 (NIDS 100030).
+    #
+    # "cmd.exe /c" and "${jndi:" are intentionally not
+    # here: "cmd.exe /c" appears in legitimate scripts
+    # downloaded over HTTP, and Log4j has its own list.
+    "powershell -enc ",
     "powershell -encodedcommand",
-    "cmd.exe /c",
+    "powershell.exe -enc ",
+    "powershell.exe -encodedcommand",
     "/bin/sh -i",
     "/bin/bash -i",
 },
@@ -66,7 +71,11 @@ INDICATORS = {
     "high_confidence_sqli_signatures": {
         "UNION SELECT",
         "UNION ALL SELECT",
-        # etc.
+        "UNION+SELECT",
+        "UNION+ALL+SELECT",
+        "UNION%20SELECT",
+        "UNION%20ALL%20SELECT",
+        "UNION/**/SELECT",
     },
 
     "xss_signatures": {
@@ -76,11 +85,19 @@ INDICATORS = {
         "onload=",
     },
 
+    # Used by BLOCK rule 330008. Only lookups with a
+    # remote protocol; the bare "${jndi:" prefix is what
+    # the NIDS rule already matches.
     "log4j_signatures": {
-        "${jndi:",
         "${jndi:ldap:",
+        "${jndi:ldaps:",
         "${jndi:rmi:",
         "${jndi:dns:",
+        "${jndi:iiop:",
+        "${jndi:corba:",
+        "${jndi:nds:",
+        "${jndi:nis:",
+        "${jndi:http:",
     },
 
     "path_traversal_signatures": {
@@ -125,10 +142,14 @@ INDICATORS = {
     # WannaCry sample contacted a specific kill-switch
     # domain.
     #
+    # DNS packets encode names as length-prefixed labels
+    # (\x29iuqerf...gwea\x03com), so the ".com" form never
+    # appears in the payload. Only the label is matched.
+    #
     "wannacry_killswitch_signatures": {
-        "iuqerfsodp9ifjaposdfjhgosurijfaewrwergwea.com",
-        "iuqssfsodp9ifjaposdfjhgosurijfaewrwergwea.com",
-        "ifferfsodp9ifjaposdfjhgosurijfaewrwergwea.com",
+        "iuqerfsodp9ifjaposdfjhgosurijfaewrwergwea",
+        "iuqssfsodp9ifjaposdfjhgosurijfaewrwergwea",
+        "ifferfsodp9ifjaposdfjhgosurijfaewrwergwea",
     },
 
 
@@ -142,11 +163,14 @@ INDICATORS = {
     # These are recognizable content indicators
     # reported in research on ICMP covert channels.
     #
+    # Short strings such as "dns" occur by chance in
+    # binary ICMP payloads and were removed.
+    #
     "icmp_covert_channel_signatures": {
         "http://",
         "https://",
-        "dns",
-        "tunl",
+        "HTTP/1.1",
+        "Host: ",
     },
 
 
@@ -216,7 +240,7 @@ INDICATORS = {
         "sekurlsa",
         "lsadump",
         "procdump",
-        "psexec",
+        # "psexec" removed: widely used by administrators.
         "regsvr32",
         "rundll32",
     },
@@ -231,6 +255,8 @@ INDICATORS = {
         "-enc",
         "executionpolicy bypass",
         "amsiutils",
+        "amsiinitfailed",
+        "reflection.assembly]::load",
         "minidumpwritedump",
     },
 
@@ -246,11 +272,18 @@ INDICATORS = {
         "\\users\\",
     },
 
+    # HIDS reports the service display name (param1) for
+    # 7031/7034/7024, so display names are listed too.
+    # "sense" removed: too short for substring matching.
     "critical_security_services": {
         "windefend",
-        "sense",
+        "microsoft defender antivirus",
+        "windows defender antivirus",
+        "windows defender advanced threat protection",
         "mpssvc",
+        "windows defender firewall",
         "eventlog",
+        "windows event log",
         "sysmon",
     },
 

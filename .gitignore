@@ -38,3 +38,6 @@ Thumbs.db
 *.tmp
 *.bak
 NIDS/alert_manager_nids_checkpoint.json
+# Development data folder (paths.py) and build output
+data/
+build/

@@ -14,7 +14,8 @@ from typing import List, Optional, Set, Union
 
 
 # Default path to hids.rules in project root
-DEFAULT_RULES_FILE = Path(__file__).resolve().parent / "hids.rules"
+# Editable copy in the data folder (seeded from hids/hids.rules)
+from paths import HIDS_RULES_FILE as DEFAULT_RULES_FILE  # noqa: E402
 
 @dataclass
 class Rule:

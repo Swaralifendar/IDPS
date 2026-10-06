@@ -1,11 +1,17 @@
 import time
 import json
+import hashlib
+import subprocess
 from pathlib import Path
 from collections import defaultdict
+from dataclasses import fields as dataclass_fields
 from datetime import datetime, timezone
 
 from alert_manager.adapters.hids_adapter import HIDSAdapter
 from alert_manager.adapters.nids_adapter import NIDSAdapter
+from alert_manager.schema.alert_schema import AlertSchema
+from paths import CORRELATION_FILE
+from rotation import rotate_if_needed
 
 
 # ============================================================
@@ -127,12 +133,115 @@ CORRELATION_SEVERITY = {
 
 
 # ============================================================
+# BUCKET LIMITS / STATE
+# ============================================================
+
+# A packet flood can put thousands of NIDS alerts into one
+# bucket, and every correlation line carries the full bucket
+# in source_events. Only the newest events are kept; every
+# IPS min_events threshold (max 6) and severity threshold
+# above is far below this limit.
+MAX_BUCKET_EVENTS = 100
+
+# Bucket events are saved complete (including "raw" and the
+# payload), so source_events stay complete after a restart.
+# Only these AlertSchema fields are accepted when loading.
+STATE_EVENT_FIELDS = {
+    f.name for f in dataclass_fields(AlertSchema)
+}
+
+
+# ============================================================
+# LOCAL HOST ADDRESSES
+# ============================================================
+
+LOCAL_IP_REFRESH_SECONDS = 60
+
+_local_ips = set()
+_local_ips_refreshed_at = 0.0
+
+
+def get_local_ips():
+    """
+    Return this machine's IP addresses (cached, refreshed
+    every 60 seconds because DHCP can change them).
+    """
+
+    global _local_ips, _local_ips_refreshed_at
+
+    now = time.time()
+
+    if now - _local_ips_refreshed_at < LOCAL_IP_REFRESH_SECONDS:
+        return _local_ips
+
+    addresses = {"127.0.0.1", "::1"}
+
+    try:
+        result = subprocess.run(
+            [
+                "powershell",
+                "-NoProfile",
+                "-Command",
+                "Get-NetIPAddress | "
+                "Select-Object -ExpandProperty IPAddress"
+            ],
+            capture_output=True,
+            text=True,
+            check=True,
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0)
+        )
+
+        for line in result.stdout.splitlines():
+            # Strip IPv6 zone index, e.g. fe80::1%12
+            address = line.strip().split("%")[0]
+
+            if address:
+                addresses.add(address)
+
+    except Exception as e:
+        print(f"[CORRELATION] Failed to read local IP addresses: {e}")
+
+        # Keep the previous list rather than dropping to
+        # loopback only.
+        addresses |= _local_ips
+
+    _local_ips = addresses
+    _local_ips_refreshed_at = now
+
+    return _local_ips
+
+
+# ============================================================
+# EVENT FINGERPRINT
+# ============================================================
+
+def event_fingerprint(event):
+    """
+    Stable ID for one normalized alert.
+
+    The same alert is written once per category and per
+    correlation IP; this ID lets IPS recognize it as the
+    same event.
+    """
+
+    data = json.dumps(
+        event.to_dict(),
+        sort_keys=True,
+        default=str
+    )
+
+    return hashlib.sha1(
+        data.encode("utf-8")
+    ).hexdigest()
+
+
+# ============================================================
 # CORRELATION ENGINE
 # ============================================================
 
 class CorrelationEngine:
 
-    def __init__(self):
+    def __init__(self, state_file=None):
 
         # ----------------------------------------------------
         # EXISTING CORRELATION STRUCTURE
@@ -150,10 +259,119 @@ class CorrelationEngine:
         # Correlation output file
         # ----------------------------------------------------
 
-        self.correlation_file = (
-            Path(__file__).resolve().parent
-            / "correlation.json"
+        self.correlation_file = CORRELATION_FILE
+
+        # ----------------------------------------------------
+        # Bucket state file (survives worker restarts).
+        # None disables persistence.
+        # ----------------------------------------------------
+
+        self.state_file = (
+            Path(state_file) if state_file else None
         )
+
+        # True when buckets changed since the last save
+        self._dirty = False
+
+    # ========================================================
+    # BUCKET STATE PERSISTENCE
+    # ========================================================
+
+    def load_state(self):
+        """
+        Restore buckets saved by a previous run, so event
+        counts continue across restarts. Expired events are
+        dropped immediately.
+        """
+
+        if not self.state_file or not self.state_file.exists():
+            return
+
+        try:
+            with open(self.state_file, "r", encoding="utf-8") as f:
+                data = json.load(f)
+
+            skipped = 0
+
+            for category, ips in data.get("buckets", {}).items():
+                for ip, events in ips.items():
+                    for event in events:
+                        try:
+                            self.buckets[category][ip].append(
+                                AlertSchema(**{
+                                    key: value
+                                    for key, value in event.items()
+                                    if key in STATE_EVENT_FIELDS
+                                })
+                            )
+                        except Exception:
+                            skipped += 1
+
+            if skipped:
+                print(
+                    f"[CORRELATION] Skipped {skipped} invalid events "
+                    f"in {self.state_file}"
+                )
+
+        except Exception as e:
+            print(
+                f"[CORRELATION] Ignoring unreadable state file "
+                f"{self.state_file}: {e}"
+            )
+            self.buckets.clear()
+            return
+
+        self.cleanup()
+
+        restored = sum(
+            len(bucket)
+            for ips in self.buckets.values()
+            for bucket in ips.values()
+        )
+
+        print(
+            f"[CORRELATION] Restored {restored} unexpired bucket events "
+            f"from {self.state_file}"
+        )
+
+    def save_state(self):
+        """Save buckets atomically if they changed."""
+
+        if not self.state_file or not self._dirty:
+            return
+
+        data = {
+            "buckets": {
+                category: {
+                    ip: [
+                        event.to_dict()
+                        for event in bucket
+                    ]
+                    for ip, bucket in ips.items()
+                }
+                for category, ips in self.buckets.items()
+            }
+        }
+
+        self.state_file.parent.mkdir(
+            parents=True,
+            exist_ok=True
+        )
+
+        temp_path = self.state_file.with_suffix(".tmp")
+
+        try:
+            with open(temp_path, "w", encoding="utf-8") as f:
+                json.dump(data, f, ensure_ascii=False, default=str)
+
+            temp_path.replace(self.state_file)
+
+        except OSError as e:
+            # Keep _dirty set so the next loop retries
+            print(f"[CORRELATION] Failed to save state: {e}")
+            return
+
+        self._dirty = False
 
     # ========================================================
     # TIMESTAMP
@@ -184,21 +402,36 @@ class CorrelationEngine:
         Get IP addresses that can be used
         as correlation keys.
 
-        EXISTING LOGIC — UNCHANGED.
+        Events are correlated by the REMOTE side only.
+        The client's own addresses appear in almost every
+        event, so keying on them would merge activity from
+        unrelated remote IPs into one bucket.
+
+        If an event has no remote IP (for example a local
+        HIDS event), it is correlated by the host IP.
         """
 
-        ips = set()
+        local_ips = get_local_ips()
 
-        if event.source_ip:
-            ips.add(event.source_ip)
+        candidates = {
+            ip
+            for ip in (event.source_ip, event.destination_ip)
+            if ip
+        }
 
-        if event.destination_ip:
-            ips.add(event.destination_ip)
+        remote_ips = {
+            ip
+            for ip in candidates
+            if ip not in local_ips
+        }
+
+        if remote_ips:
+            return remote_ips
 
         if event.host_ip:
-            ips.add(event.host_ip)
+            return {event.host_ip}
 
-        return ips
+        return candidates
 
     # ========================================================
     # CALCULATE CORRELATION SEVERITY
@@ -233,7 +466,8 @@ class CorrelationEngine:
         category,
         ip,
         bucket,
-        window
+        window,
+        final=True
     ):
         """
         Write the current real-time correlation result.
@@ -295,7 +529,7 @@ class CorrelationEngine:
         # raw
         #
         # The "raw" field contains the original NIDS/HIDS
-        # alert data.
+        # alert data (including the payload).
         #
         # Therefore no source fields are lost.
         # ====================================================
@@ -354,13 +588,30 @@ class CorrelationEngine:
             # ------------------------------------------------
             # COMPLETE SOURCE EVENTS
             #
-            # This is the new part.
-            #
-            # IPS can now inspect everything that came from
-            # NIDS/HIDS without reading another log.
+            # IPS can inspect everything that came from
+            # NIDS/HIDS (all fields, including the payload)
+            # without reading another log.
             # ------------------------------------------------
 
             "source_events": source_events,
+
+            # ------------------------------------------------
+            # NEW EVENT THAT PRODUCED THIS CORRELATION
+            #
+            # The last entry of source_events (complete, with
+            # "raw"). IPS decides on this event; the earlier
+            # source events were decided when they arrived,
+            # so they are not decided again.
+            # ------------------------------------------------
+
+            "trigger_event": latest_event.to_dict(),
+
+            "trigger_event_id": event_fingerprint(
+                latest_event
+            ),
+
+            # Last correlation written for this event
+            "trigger_final": final,
         }
 
         # ====================================================
@@ -375,6 +626,10 @@ class CorrelationEngine:
         # ====================================================
         # APPEND REAL-TIME CORRELATION RESULT
         # ====================================================
+
+        # Size-based rotation; the IPS worker follows the
+        # rotated file (rotation.JsonlTail).
+        rotate_if_needed(self.correlation_file)
 
         with open(
             self.correlation_file,
@@ -417,6 +672,14 @@ class CorrelationEngine:
 
         if not ips:
             return
+
+        # The last correlation written for this event is marked
+        # "trigger_final", so IPS can record a single PASS for
+        # the event instead of one per category/IP.
+        remaining = len(ips) * sum(
+            1 for category in categories
+            if category in CORRELATION_WINDOWS
+        )
 
         # ----------------------------------------------------
         # Process every category
@@ -462,6 +725,12 @@ class CorrelationEngine:
 
                 bucket.append(event)
 
+                # Keep only the newest events
+                if len(bucket) > MAX_BUCKET_EVENTS:
+                    del bucket[:-MAX_BUCKET_EVENTS]
+
+                self._dirty = True
+
                 # --------------------------------------------
                 # Display correlation
                 # --------------------------------------------
@@ -478,11 +747,14 @@ class CorrelationEngine:
                 # Write enriched correlation result
                 # --------------------------------------------
 
+                remaining -= 1
+
                 self._write_correlation(
                     category,
                     ip,
                     bucket,
-                    window
+                    window,
+                    final=(remaining == 0)
                 )
 
     # ========================================================
@@ -513,6 +785,8 @@ class CorrelationEngine:
 
                 bucket = self.buckets[category][ip]
 
+                before = len(bucket)
+
                 bucket[:] = [
                     event
                     for event in bucket
@@ -523,6 +797,9 @@ class CorrelationEngine:
                         )
                     ).total_seconds() <= window
                 ]
+
+                if len(bucket) != before:
+                    self._dirty = True
 
                 if not bucket:
                     del self.buckets[category][ip]
@@ -575,6 +852,8 @@ class CorrelationEngine:
             # ------------------------------------------------
 
             self.cleanup()
+
+            self.save_state()
 
             # ------------------------------------------------
             # Poll interval

@@ -126,6 +126,5 @@ alert tcp any any -> any [31337,12345,27374] (msg:"Suspicious Service - Legacy T
 # ------------------------------------------------------------------------------
 # F. Header Structural & Host Impersonation Anomalies
 # ------------------------------------------------------------------------------
-alert ip any any -> any any (msg:"IP Protocol Anomaly - LAND Attack Signature (Identical Source and Destination IP and Port)"; sameip:true; classtype:bad-unknown; priority:1; category_type:"DOS";sid:100065; rev:1;)
 
 alert icmp any any -> any any (msg:"ICMP Echo Request Detected"; icmp_type:8; category_type:"RECON";sid:100066; rev:1; classtype:network-scan; priority:2;)

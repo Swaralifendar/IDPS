@@ -4,39 +4,60 @@
 #
 # IPS does NOT create new attack scenarios.
 #
-# Every rule maps back to an existing NIDS or HIDS detection.
+# Every rule maps back to an existing NIDS SID or HIDS rule ID
+# through detection_id. NIDS 100001 (test rule) and 100066
+# (plain ICMP echo) intentionally have no IPS rule.
 #
-# Required conditions use AND semantics:
+# All configured conditions use AND semantics. If any explicitly
+# configured condition fails: NO IPS DECISION.
 #
-#   sensor
-#   detection_id
-#   protocol
-#   ports
-#   payload
-#   flags
-#   event count
-#   severity
+# How each condition is evaluated by ips_engine.py:
 #
-# If any explicitly configured condition fails:
+#   category_type      FILTER, not a label. Must be one of the
+#                      categories of the NIDS/HIDS alert, or the
+#                      rule never matches.
 #
-#       NO IPS DECISION
+#   detection_id       NIDS SID or HIDS rule ID of the alert.
 #
-# BLOCK additionally requires the configured indicator list.
+#   content / content_all / content_any / content_not
+#                      Substring match on the NIDS payload, or on
+#                      the HIDS alert "details" text.
+#
+#   severity_at_least  Severity of the individual alert:
+#                        NIDS priority 1 = HIGH, 2 = MEDIUM, 3 = LOW
+#                        HIDS severity from hids/rule_metadata.py
+#                      (suppressed HIDS alerts are INFO -> never match)
+#
+#   min_events         Number of alerts in the correlation bucket
+#                      (same category + same IP within the window).
+#                      NIDS alerts are per packet.
+#
+#   indicator + list   Substring (payload) or exact (IP) match
+#                      against IPS/indicators.py.
+#
+# tcp_flags is NOT used: NIDS stores flags as a dict, so the IPS
+# comparison can never match. The NIDS SID already guarantees the
+# flag combination.
+#
+# DETECT rules produce ALERT decisions (correlation path only).
+# BLOCK rules are the only rules that drop traffic (inline path).
 #
 # ============================================================
 
+
 # ============================================================
-# 2. SQL INJECTION
+# 1. SQL INJECTION
 # ============================================================
 
 detect tcp any any -> any 80,443,8080 (
     sensor:NIDS;
     detection_id:100002;
     content_all:"UNION","SELECT";
+    content_any:"union select","union all select","union+select","union+all+select","union%20select","union%20all%20select","union/**/select";
     nocase;
     msg:"IPS Validate - SQL UNION SELECT";
     sid:310002;
-    rev:1;
+    rev:2;
     category_type:EXPLOIT;
     priority:1;
 )
@@ -59,10 +80,11 @@ detect tcp any any -> any 80,443,8080 (
     sensor:NIDS;
     detection_id:100004;
     content:"SLEEP(";
+    content_any:"and sleep(","or sleep(","select sleep(","+sleep(","%20sleep(","'sleep(","(sleep(","pg_sleep(";
     nocase;
     msg:"IPS Validate - SQL Time Based Injection";
     sid:310004;
-    rev:1;
+    rev:2;
     category_type:EXPLOIT;
     priority:1;
 )
@@ -70,17 +92,18 @@ detect tcp any any -> any 80,443,8080 (
 
 
 # ============================================================
-# 3. XSS
+# 2. XSS
 # ============================================================
 
 detect tcp any any -> any 80,443,8080 (
     sensor:NIDS;
     detection_id:100005;
     content:"<script";
+    content_any:"alert(","prompt(","confirm(","document.cookie","document.domain","fromcharcode","eval(";
     nocase;
     msg:"IPS Validate - XSS Script Injection";
     sid:310005;
-    rev:1;
+    rev:2;
     category_type:EXPLOIT;
     priority:1;
 )
@@ -89,11 +112,11 @@ detect tcp any any -> any 80,443,8080 (
 detect tcp any any -> any 80,443,8080 (
     sensor:NIDS;
     detection_id:100006;
-    content:"javascript:";
+    content_any:"javascript:alert(","javascript:prompt(","javascript:confirm(","javascript:eval(","javascript:document.";
     nocase;
     msg:"IPS Validate - XSS Javascript URI";
     sid:310006;
-    rev:1;
+    rev:2;
     category_type:EXPLOIT;
     priority:1;
 )
@@ -114,32 +137,32 @@ detect tcp any any -> any 80,443,8080 (
 
 
 # ============================================================
-# 4. PATH / FILE DISCLOSURE
+# 3. PATH TRAVERSAL / FILE DISCLOSURE
 # ============================================================
 
 detect tcp any any -> any 80,443,8080 (
     sensor:NIDS;
     detection_id:100008;
-    content_all:"../","/etc/passwd";
+    content:"/etc/passwd";
+    content_any:"../","..%2f","%2e%2e/","%2e%2e%2f","..\";
     nocase;
-    min_events:1;
-    severity_at_least:HIGH;
     msg:"IPS Validate - Linux Path Traversal Attempt";
     sid:310008;
-    rev:2;
+    rev:3;
     category_type:EXPLOIT;
     priority:1;
 )
 
+
 detect tcp any any -> any 80,443,8080 (
     sensor:NIDS;
     detection_id:100009;
-    content_all:"../","/etc/shadow";
+    content:"/etc/shadow";
+    content_any:"../","..%2f","%2e%2e/","%2e%2e%2f","..\";
     nocase;
-    severity_at_least:HIGH;
     msg:"IPS Validate - Linux Shadow File Path Traversal";
     sid:310009;
-    rev:2;
+    rev:3;
     category_type:EXPLOIT;
     priority:1;
 )
@@ -150,10 +173,9 @@ detect tcp any any -> any 80,443,8080 (
     detection_id:100010;
     content_all:"..","windows","win.ini";
     nocase;
-    severity_at_least:HIGH;
     msg:"IPS Validate - Windows Path Traversal to win.ini";
     sid:310010;
-    rev:2;
+    rev:3;
     category_type:EXPLOIT;
     priority:1;
 )
@@ -164,28 +186,28 @@ detect tcp any any -> any 80,443,8080 (
     detection_id:100011;
     content_all:"..","boot.ini";
     nocase;
-    severity_at_least:HIGH;
     msg:"IPS Validate - Windows Path Traversal to boot.ini";
     sid:310011;
-    rev:2;
+    rev:3;
     category_type:EXPLOIT;
     priority:1;
 )
 
 
+
 # ============================================================
-# 5. POWERSHELL / COMMAND EXECUTION
+# 4. REMOTE COMMAND EXECUTION / COMMAND SHELLS
 # ============================================================
 
 detect tcp any any -> any 80,443,8080 (
     sensor:NIDS;
     detection_id:100012;
-    content:"powershell";
+    content_any:"/bin/sh -c","/bin/sh -i",";/bin/sh","|/bin/sh","`/bin/sh","$(/bin/sh","/bin/sh+-c","/bin/sh%20-c";
     nocase;
-    msg:"IPS Validate - PowerShell Download Activity";
+    msg:"IPS Validate - Remote Command Execution /bin/sh";
     sid:310012;
-    rev:1;
-    category_type:MALWARE;
+    rev:2;
+    category_type:EXPLOIT;
     priority:1;
 )
 
@@ -193,12 +215,12 @@ detect tcp any any -> any 80,443,8080 (
 detect tcp any any -> any 80,443,8080 (
     sensor:NIDS;
     detection_id:100013;
-    content:"IEX";
+    content_any:"/bin/bash -c","/bin/bash -i",";/bin/bash","|/bin/bash","`/bin/bash","$(/bin/bash","/bin/bash+-c","/bin/bash%20-c";
     nocase;
-    msg:"IPS Validate - PowerShell IEX";
+    msg:"IPS Validate - Remote Command Execution /bin/bash";
     sid:310013;
-    rev:1;
-    category_type:MALWARE;
+    rev:2;
+    category_type:EXPLOIT;
     priority:1;
 )
 
@@ -229,9 +251,22 @@ detect tcp any any -> any any (
 )
 
 
+detect tcp any any -> any any (
+    sensor:NIDS;
+    detection_id:100030;
+    content_all:"/bin/sh -i","/dev/tcp/";
+    nocase;
+    msg:"IPS Validate - Interactive Bash Reverse Shell";
+    sid:310030;
+    rev:2;
+    category_type:C2;
+    priority:1;
+)
+
+
 
 # ============================================================
-# 6. REVERSE SHELL
+# 5. WEBSHELLS / OTHER WEB EXPLOITATION
 # ============================================================
 
 detect tcp any any -> any 80,443,8080 (
@@ -239,7 +274,6 @@ detect tcp any any -> any 80,443,8080 (
     detection_id:100014;
     content:"eval(base64_decode";
     nocase;
-    severity_at_least:HIGH;
     msg:"IPS Validate - PHP Webshell Obfuscated Execution";
     sid:310014;
     rev:3;
@@ -248,33 +282,27 @@ detect tcp any any -> any 80,443,8080 (
 )
 
 
-detect tcp any any -> any any (
+detect tcp any any -> any 80,443,8080 (
     sensor:NIDS;
-    detection_id:100030;
-    content_all:"/bin/sh -i","/dev/tcp/";
+    detection_id:100015;
+    content:"passthru($_POST";
     nocase;
-    severity_at_least:HIGH;
-    msg:"IPS Validate - Interactive Bash Reverse Shell";
-    sid:310030;
-    rev:2;
-    category_type:C2;
+    msg:"IPS Validate - PHP Webshell Command Passthru";
+    sid:310015;
+    rev:1;
+    category_type:EXPLOIT;
     priority:1;
 )
-
-# ============================================================
-# 7. OTHER WEB EXPLOITATION
-# ============================================================
 
 
 detect tcp any any -> any 80,443,8080 (
     sensor:NIDS;
     detection_id:100016;
-    content_all:"select","--";
+    content:"${jndi:";
     nocase;
-    severity_at_least:HIGH;
-    msg:"IPS Validate - SQL Comment Injection";
+    msg:"IPS Validate - Log4j JNDI Injection";
     sid:310016;
-    rev:2;
+    rev:3;
     category_type:EXPLOIT;
     priority:1;
 )
@@ -283,32 +311,31 @@ detect tcp any any -> any 80,443,8080 (
 detect tcp any any -> any 80,443,8080 (
     sensor:NIDS;
     detection_id:100017;
-    content_any:"{{","${","<%";
+    content:"class.module.classLoader";
     nocase;
-    severity_at_least:HIGH;
-    msg:"IPS Validate - Template Injection";
+    msg:"IPS Validate - Spring4Shell ClassLoader RCE";
     sid:310017;
-    rev:2;
+    rev:3;
     category_type:EXPLOIT;
     priority:1;
 )
 
+
 detect tcp any any -> any 80,443,8080 (
     sensor:NIDS;
     detection_id:100018;
-    content:"${jndi:";
-    nocase;
-    msg:"IPS Validate - Log4j JNDI Injection";
+    content:"${7*7}";
+    msg:"IPS Validate - Server-Side Template Injection";
     sid:310018;
-    rev:1;
+    rev:2;
     category_type:EXPLOIT;
-    priority:1;
+    priority:2;
 )
 
 
 
 # ============================================================
-# 8. SECURITY SCANNER DETECTIONS
+# 6. SECURITY SCANNER DETECTIONS
 # ============================================================
 
 detect tcp any any -> any 80,443,8080 (
@@ -391,41 +418,46 @@ detect tcp any any -> any 80,443,8080 (
 
 
 # ============================================================
-# 9. METASPLOIT / METERPRETER / COBALT STRIKE
+# 7. METASPLOIT / METERPRETER / COBALT STRIKE
 # ============================================================
 
 detect tcp any any -> any 4444 (
     sensor:NIDS;
     detection_id:100027;
+    min_events:2;
     severity_at_least:HIGH;
-    msg:"IPS Validate - Metasploit Activity";
+    msg:"IPS Validate - Metasploit Handler Port Activity";
     sid:310027;
+    rev:3;
+    category_type:C2;
+    priority:1;
+)
+
+
+# PE header between two non-service (high) ports, as seen with
+# Meterpreter stages. Normal HTTP/HTTPS/SMB downloads use a
+# well-known port on one side and are excluded.
+detect tcp any 1024:65535 -> any 1024:65535 (
+    sensor:NIDS;
+    detection_id:100028;
+    min_events:2;
+    msg:"IPS Validate - Meterpreter PE Stage";
+    sid:310028;
     rev:2;
     category_type:C2;
     priority:1;
 )
 
 
-detect tcp any any -> any any (
-    sensor:NIDS;
-    detection_id:100028;
-    content:"MZ\x90\x00";
-    msg:"IPS Validate - Meterpreter PE Header";
-    sid:310028;
-    rev:1;
-    category_type:C2;
-    priority:1;
-)
-
-
+# Cobalt Strike default check-in posts binary data.
 detect tcp any any -> any any (
     sensor:NIDS;
     detection_id:100029;
-    content:"/submit.php?id=";
+    content_all:"POST /submit.php?id=","application/octet-stream";
     nocase;
-    msg:"IPS Validate - Cobalt Strike C2 URI";
+    msg:"IPS Validate - Cobalt Strike C2 Check-in";
     sid:310029;
-    rev:1;
+    rev:2;
     category_type:C2;
     priority:1;
 )
@@ -433,16 +465,17 @@ detect tcp any any -> any any (
 
 
 # ============================================================
-# 10. TCP FLAG ANOMALIES
+# 8. TCP FLAG ANOMALIES (SCANS)
 # ============================================================
+# A scan produces many packets, so require a burst.
 
 detect tcp any any -> any any (
     sensor:NIDS;
     detection_id:100031;
-    tcp_flags:NULL;
+    min_events:5;
     msg:"IPS Validate - TCP NULL Scan";
     sid:310031;
-    rev:1;
+    rev:2;
     category_type:RECON;
     priority:2;
 )
@@ -451,10 +484,10 @@ detect tcp any any -> any any (
 detect tcp any any -> any any (
     sensor:NIDS;
     detection_id:100032;
-    tcp_flags:XMAS;
+    min_events:5;
     msg:"IPS Validate - TCP XMAS Scan";
     sid:310032;
-    rev:1;
+    rev:2;
     category_type:RECON;
     priority:2;
 )
@@ -463,10 +496,10 @@ detect tcp any any -> any any (
 detect tcp any any -> any any (
     sensor:NIDS;
     detection_id:100033;
-    tcp_flags:SYN-FIN;
-    msg:"IPS Validate - TCP SYN-FIN";
+    min_events:5;
+    msg:"IPS Validate - TCP SYN-FIN Scan";
     sid:310033;
-    rev:1;
+    rev:2;
     category_type:RECON;
     priority:2;
 )
@@ -475,54 +508,329 @@ detect tcp any any -> any any (
 detect tcp any any -> any any (
     sensor:NIDS;
     detection_id:100034;
-    tcp_flags:FIN;
-    msg:"IPS Validate - TCP FIN Without ACK";
+    min_events:6;
+    msg:"IPS Validate - TCP FIN Scan Without ACK";
     sid:310034;
-    rev:1;
+    rev:2;
     category_type:RECON;
     priority:2;
 )
 
 
+detect tcp any any -> any any (
+    sensor:NIDS;
+    detection_id:100045;
+    min_events:3;
+    severity_at_least:MEDIUM;
+    msg:"IPS Validate - TCP SYN-RST";
+    sid:310045;
+    rev:4;
+    category_type:NETWORK_ANOMALY;
+    priority:2;
+)
+
+
+detect tcp any any -> any any (
+    sensor:NIDS;
+    detection_id:100046;
+    min_events:3;
+    severity_at_least:MEDIUM;
+    msg:"IPS Validate - TCP FIN-RST";
+    sid:310046;
+    rev:4;
+    category_type:NETWORK_ANOMALY;
+    priority:2;
+)
+
+
+detect tcp any any -> any any (
+    sensor:NIDS;
+    detection_id:100047;
+    min_events:3;
+    severity_at_least:MEDIUM;
+    msg:"IPS Validate - TCP SYN-PSH";
+    sid:310047;
+    rev:4;
+    category_type:NETWORK_ANOMALY;
+    priority:2;
+)
+
+
 
 # ============================================================
-# 11. SMB / REDIS / ELASTICSEARCH / FTP / TELNET
+# 9. TCP PAYLOAD / PORT ANOMALIES
 # ============================================================
 
+detect tcp any any -> any any (
+    sensor:NIDS;
+    detection_id:100048;
+    min_events:3;
+    severity_at_least:MEDIUM;
+    msg:"IPS Validate - TCP RST With Payload";
+    sid:310048;
+    rev:3;
+    category_type:NETWORK_ANOMALY;
+    priority:2;
+)
+
+
+# TCP Fast Open legitimately carries data in SYN; require a burst.
+detect tcp any any -> any any (
+    sensor:NIDS;
+    detection_id:100049;
+    min_events:3;
+    severity_at_least:MEDIUM;
+    msg:"IPS Validate - Large TCP SYN Payload";
+    sid:310049;
+    rev:3;
+    category_type:NETWORK_ANOMALY;
+    priority:2;
+)
+
+
+detect tcp any any -> any any (
+    sensor:NIDS;
+    detection_id:100050;
+    min_events:3;
+    severity_at_least:MEDIUM;
+    msg:"IPS Validate - SYN-ACK With Large Payload";
+    sid:310050;
+    rev:3;
+    category_type:NETWORK_ANOMALY;
+    priority:2;
+)
+
+
+detect tcp any any -> any 0 (
+    sensor:NIDS;
+    detection_id:100051;
+    min_events:2;
+    severity_at_least:MEDIUM;
+    msg:"IPS Validate - TCP Destination Port 0";
+    sid:310051;
+    rev:3;
+    category_type:NETWORK_ANOMALY;
+    priority:2;
+)
+
+
+detect tcp any 0 -> any any (
+    sensor:NIDS;
+    detection_id:100052;
+    min_events:2;
+    severity_at_least:MEDIUM;
+    msg:"IPS Validate - TCP Source Port 0";
+    sid:310052;
+    rev:3;
+    category_type:NETWORK_ANOMALY;
+    priority:2;
+)
+
+
+
+# ============================================================
+# 10. UDP / DNS ANOMALIES
+# ============================================================
+
+# Only large DNS *queries* (tunneling/exfiltration). Large DNS
+# responses (EDNS0, DNSSEC, TXT) are normal and excluded.
+detect udp any any -> any 53 (
+    sensor:NIDS;
+    detection_id:100042;
+    min_events:3;
+    severity_at_least:MEDIUM;
+    msg:"IPS Validate - Oversized DNS Query";
+    sid:310042;
+    rev:3;
+    category_type:NETWORK_ANOMALY;
+    priority:2;
+)
+
+
+detect udp any any -> any 0 (
+    sensor:NIDS;
+    detection_id:100053;
+    min_events:2;
+    severity_at_least:MEDIUM;
+    msg:"IPS Validate - UDP Destination Port 0";
+    sid:310053;
+    rev:3;
+    category_type:NETWORK_ANOMALY;
+    priority:2;
+)
+
+
+detect udp any 0 -> any any (
+    sensor:NIDS;
+    detection_id:100054;
+    min_events:2;
+    severity_at_least:MEDIUM;
+    msg:"IPS Validate - UDP Source Port 0";
+    sid:310054;
+    rev:3;
+    category_type:NETWORK_ANOMALY;
+    priority:2;
+)
+
+
+detect udp any any -> any 53 (
+    sensor:NIDS;
+    detection_id:100055;
+    min_events:3;
+    severity_at_least:LOW;
+    msg:"IPS Validate - Empty DNS Packets";
+    sid:310055;
+    rev:3;
+    category_type:NETWORK_ANOMALY;
+    priority:3;
+)
+
+
+detect udp any any -> any 161 (
+    sensor:NIDS;
+    detection_id:100056;
+    min_events:3;
+    severity_at_least:LOW;
+    msg:"IPS Validate - Empty SNMP Probes";
+    sid:310056;
+    rev:3;
+    category_type:NETWORK_ANOMALY;
+    priority:3;
+)
+
+
+detect udp any any -> any 17,19 (
+    sensor:NIDS;
+    detection_id:100057;
+    min_events:3;
+    severity_at_least:MEDIUM;
+    msg:"IPS Validate - Chargen/QOTD Amplification Traffic";
+    sid:310057;
+    rev:1;
+    category_type:DOS;
+    priority:2;
+)
+
+
+# Windows UDP segmentation offload (QUIC) can show outbound UDP
+# larger than the MTU, so require a sustained burst.
+detect udp any any -> any any (
+    sensor:NIDS;
+    detection_id:100058;
+    min_events:5;
+    severity_at_least:LOW;
+    msg:"IPS Validate - Oversized UDP Datagrams";
+    sid:310058;
+    rev:3;
+    category_type:NETWORK_ANOMALY;
+    priority:3;
+)
+
+
+
+# ============================================================
+# 11. ICMP ANOMALIES
+# ============================================================
+
+detect icmp any any -> any any (
+    sensor:NIDS;
+    detection_id:100043;
+    min_events:5;
+    severity_at_least:MEDIUM;
+    msg:"IPS Validate - Oversized ICMP Echo Flood";
+    sid:310043;
+    rev:3;
+    category_type:DOS;
+    priority:2;
+)
+
+
+detect icmp any any -> any any (
+    sensor:NIDS;
+    detection_id:100044;
+    indicator:payload;
+    list:icmp_covert_channel_signatures;
+    min_events:2;
+    msg:"IPS Validate - ICMP Covert Channel";
+    sid:310044;
+    rev:3;
+    category_type:C2;
+    priority:2;
+)
+
+
+detect icmp any any -> any any (
+    sensor:NIDS;
+    detection_id:100059;
+    min_events:6;
+    severity_at_least:LOW;
+    msg:"IPS Validate - ICMP Zero Payload Sweep";
+    sid:310059;
+    rev:4;
+    category_type:RECON;
+    priority:2;
+)
+
+
+detect icmp any any -> any any (
+    sensor:NIDS;
+    detection_id:100060;
+    min_events:5;
+    severity_at_least:MEDIUM;
+    msg:"IPS Validate - Oversized ICMP Packets";
+    sid:310060;
+    rev:4;
+    category_type:NETWORK_ANOMALY;
+    priority:2;
+)
+
+
+
+# ============================================================
+# 12. SMB / REDIS / ELASTICSEARCH / FTP / TELNET
+# ============================================================
+
+# SAMR is used constantly by domain-joined hosts; only a burst
+# (enumeration tools such as SharpHound) is validated.
 detect tcp any any -> any 445 (
     sensor:NIDS;
     detection_id:100036;
-    content:"\PIPE\samr";
-    nocase;
-    msg:"IPS Validate - SMB SAMR Activity";
+    min_events:4;
+    msg:"IPS Validate - SMB SAMR Enumeration";
     sid:310036;
-    rev:2;
+    rev:3;
     category_type:LATERAL_MOVEMENT;
     priority:2;
 )
 
 
+# Redis RCE pattern: CONFIG SET dir / dbfilename.
+# RESP protocol does not send "CONFIG SET" as one string.
 detect tcp any any -> any 6379 (
     sensor:NIDS;
     detection_id:100037;
-    content:"CONFIG SET";
+    content_all:"CONFIG","SET";
+    content_any:"dir","dbfilename";
     nocase;
-    msg:"IPS Validate - Redis CONFIG SET";
+    msg:"IPS Validate - Redis CONFIG SET dir/dbfilename";
     sid:310037;
-    rev:1;
+    rev:2;
     category_type:EXPLOIT;
     priority:1;
 )
 
 
+# Legit Elasticsearch queries use scripts; only Java runtime
+# access (CVE-2014-3120 / CVE-2015-1427 style) is validated.
 detect tcp any any -> any 9200 (
     sensor:NIDS;
     detection_id:100038;
     content_all:"_search","script";
+    content_any:"java.lang.runtime","getruntime","processbuilder",".exec(";
     nocase;
     msg:"IPS Validate - Elasticsearch Script Execution";
     sid:310038;
-    rev:2;
+    rev:3;
     category_type:EXPLOIT;
     priority:1;
 )
@@ -554,17 +862,10 @@ detect tcp any any -> any 23 (
 )
 
 
-# ============================================================
-# 12. MALWARE / PROTOCOL ANOMALIES
-# ============================================================
 
 # ============================================================
-# 12. MALWARE / TCP ANOMALIES
+# 13. MALWARE DNS
 # ============================================================
-
-# ------------------------------------------------------------
-# 100041 - WannaCry Kill Switch
-# ------------------------------------------------------------
 
 detect udp any any -> any 53 (
     sensor:NIDS;
@@ -572,423 +873,84 @@ detect udp any any -> any 53 (
     indicator:payload;
     list:wannacry_killswitch_signatures;
     severity_at_least:HIGH;
-    msg:"IPS Validate - WannaCry Kill Switch Indicator";
+    msg:"IPS Validate - WannaCry Kill Switch Domain";
     sid:310041;
-    rev:3;
+    rev:4;
     category_type:MALWARE;
     priority:1;
 )
 
 
-# ------------------------------------------------------------
-# 100042 - Oversized DNS
-# ------------------------------------------------------------
-
-detect udp any any -> any 53 (
-    sensor:NIDS;
-    detection_id:100042;
-    min_events:2;
-    severity_at_least:HIGH;
-    msg:"IPS Validate - Oversized DNS Traffic";
-    sid:310042;
-    rev:2;
-    category_type:DOS;
-    priority:2;
-)
-
-
-# ------------------------------------------------------------
-# 100043 - Oversized ICMP
-# ------------------------------------------------------------
-
-detect icmp any any -> any any (
-    sensor:NIDS;
-    detection_id:100043;
-    min_events:2;
-    severity_at_least:HIGH;
-    msg:"IPS Validate - Oversized ICMP";
-    sid:310043;
-    rev:2;
-    category_type:DOS;
-    priority:2;
-)
-
-
-# ------------------------------------------------------------
-# 100044 - ICMP Covert Channel
-# ------------------------------------------------------------
-
-detect icmp any any -> any any (
-    sensor:NIDS;
-    detection_id:100044;
-    indicator:payload;
-    list:icmp_covert_channel_signatures;
-    severity_at_least:HIGH;
-    msg:"IPS Validate - ICMP Covert Channel";
-    sid:310044;
-    rev:2;
-    category_type:C2;
-    priority:2;
-)
-
-
-# ------------------------------------------------------------
-# 100045 - TCP SYN-RST
-# ------------------------------------------------------------
-
-detect tcp any any -> any any (
-    sensor:NIDS;
-    detection_id:100045;
-    tcp_flags:SYN-RST;
-    severity_at_least:MEDIUM;
-    msg:"IPS Validate - TCP SYN-RST";
-    sid:310045;
-    rev:3;
-    category_type:NETWORK_ANOMALY;
-    priority:2;
-)
-
-
-# ------------------------------------------------------------
-# 100046 - TCP FIN-RST
-# ------------------------------------------------------------
-
-detect tcp any any -> any any (
-    sensor:NIDS;
-    detection_id:100046;
-    tcp_flags:FIN-RST;
-    severity_at_least:MEDIUM;
-    msg:"IPS Validate - TCP FIN-RST";
-    sid:310046;
-    rev:3;
-    category_type:NETWORK_ANOMALY;
-    priority:2;
-)
-
-
-# ------------------------------------------------------------
-# 100047 - TCP SYN-PSH
-# ------------------------------------------------------------
-
-detect tcp any any -> any any (
-    sensor:NIDS;
-    detection_id:100047;
-    tcp_flags:SYN-PSH;
-    severity_at_least:MEDIUM;
-    msg:"IPS Validate - TCP SYN-PSH";
-    sid:310047;
-    rev:3;
-    category_type:NETWORK_ANOMALY;
-    priority:2;
-)
-
-
-# ------------------------------------------------------------
-# 100048 - TCP RST With Payload
-# ------------------------------------------------------------
-
-detect tcp any any -> any any (
-    sensor:NIDS;
-    detection_id:100048;
-    tcp_flags:RST;
-    min_events:2;
-    severity_at_least:MEDIUM;
-    msg:"IPS Validate - TCP RST With Payload";
-    sid:310048;
-    rev:2;
-    category_type:NETWORK_ANOMALY;
-    priority:2;
-)
-
-
-# ------------------------------------------------------------
-# 100049 - Large TCP SYN
-# ------------------------------------------------------------
-
-detect tcp any any -> any any (
-    sensor:NIDS;
-    detection_id:100049;
-    tcp_flags:SYN;
-    min_events:3;
-    severity_at_least:HIGH;
-    msg:"IPS Validate - Large TCP SYN";
-    sid:310049;
-    rev:2;
-    category_type:NETWORK_ANOMALY;
-    priority:2;
-)
-
 
 # ============================================================
-# 13. DNS / UDP ANOMALIES
+# 14. NETWORK POLICY / SUSPICIOUS SERVICES
 # ============================================================
 
-# ============================================================
-# 13. DNS / UDP ANOMALIES
-# ============================================================
-
-# ------------------------------------------------------------
-# 100050 - DNS TXT Tunneling
-# ------------------------------------------------------------
-
-detect udp any any -> any 53 (
-    sensor:NIDS;
-    detection_id:100050;
-    indicator:payload;
-    list:dns_tunneling_signatures;
-    min_events:2;
-    severity_at_least:HIGH;
-    msg:"IPS Validate - DNS TXT Tunneling";
-    sid:310050;
-    rev:2;
-    category_type:C2;
-    priority:2;
-)
-
-
-# ------------------------------------------------------------
-# 100051 - UDP Reserved Port
-# ------------------------------------------------------------
-
-detect udp any any -> any any (
-    sensor:NIDS;
-    detection_id:100051;
-    min_events:3;
-    severity_at_least:MEDIUM;
-    msg:"IPS Validate - UDP Reserved Port";
-    sid:310051;
-    rev:2;
-    category_type:NETWORK_ANOMALY;
-    priority:2;
-)
-
-
-# ------------------------------------------------------------
-# 100052 - Empty DNS/SNMP Traffic
-# ------------------------------------------------------------
-
-detect udp any any -> any any (
-    sensor:NIDS;
-    detection_id:100052;
-    min_events:2;
-    severity_at_least:MEDIUM;
-    msg:"IPS Validate - Empty DNS/SNMP Traffic";
-    sid:310052;
-    rev:2;
-    category_type:NETWORK_ANOMALY;
-    priority:2;
-)
-
-
-# ------------------------------------------------------------
-# 100053 - UDP Amplification
-# ------------------------------------------------------------
-
-detect udp any any -> any any (
-    sensor:NIDS;
-    detection_id:100053;
-    min_events:3;
-    severity_at_least:HIGH;
-    msg:"IPS Validate - UDP Amplification";
-    sid:310053;
-    rev:2;
-    category_type:DOS;
-    priority:2;
-)
-
-
-# ------------------------------------------------------------
-# 100054 - DNS Amplification
-# ------------------------------------------------------------
-
-detect udp any any -> any 53 (
-    sensor:NIDS;
-    detection_id:100054;
-    min_events:3;
-    severity_at_least:HIGH;
-    msg:"IPS Validate - DNS Amplification";
-    sid:310054;
-    rev:2;
-    category_type:DOS;
-    priority:2;
-)
-
-
-# ------------------------------------------------------------
-# 100055 - NTP Amplification
-# ------------------------------------------------------------
-
-detect udp any any -> any 123 (
-    sensor:NIDS;
-    detection_id:100055;
-    min_events:3;
-    severity_at_least:HIGH;
-    msg:"IPS Validate - NTP Amplification";
-    sid:310055;
-    rev:2;
-    category_type:DOS;
-    priority:2;
-)
-
-
-# ------------------------------------------------------------
-# 100056 - SSDP Amplification
-# ------------------------------------------------------------
-
-detect udp any any -> any 1900 (
-    sensor:NIDS;
-    detection_id:100056;
-    indicator:payload;
-    list:ssdp_amplification_signatures;
-    min_events:2;
-    severity_at_least:HIGH;
-    msg:"IPS Validate - SSDP Amplification";
-    sid:310056;
-    rev:2;
-    category_type:DOS;
-    priority:2;
-)
-
-
-
-
-# ------------------------------------------------------------
-# 100058 - Oversized UDP
-# ------------------------------------------------------------
-
-detect udp any any -> any any (
-    sensor:NIDS;
-    detection_id:100058;
-    min_events:2;
-    severity_at_least:HIGH;
-    msg:"IPS Validate - Oversized UDP";
-    sid:310058;
-    rev:2;
-    category_type:DOS;
-    priority:2;
-)
-
-
-# ------------------------------------------------------------
-# 100059 - ICMP Zero Payload
-# ------------------------------------------------------------
-
-detect icmp any any -> any any (
-    sensor:NIDS;
-    detection_id:100059;
-    min_events:3;
-    severity_at_least:MEDIUM;
-    msg:"IPS Validate - ICMP Zero Payload";
-    sid:310059;
-    rev:3;
-    category_type:RECON;
-    priority:2;
-)
-
-
-# ------------------------------------------------------------
-# 100060 - Oversized ICMP
-# ------------------------------------------------------------
-
-detect icmp any any -> any any (
-    sensor:NIDS;
-    detection_id:100060;
-    min_events:2;
-    severity_at_least:HIGH;
-    msg:"IPS Validate - Oversized ICMP";
-    sid:310060;
-    rev:3;
-    category_type:NETWORK_ANOMALY;
-    priority:2;
-)
-
-# ============================================================
-# 14. NETWORK SERVICE DETECTIONS
-# ============================================================
-
-# ============================================================
-# 14. NETWORK SERVICE DETECTIONS
-# ============================================================
-
-# ------------------------------------------------------------
-# 100061 - High Reserved TCP Port
-# ------------------------------------------------------------
-
-detect tcp any any -> any any (
+detect tcp any any -> any 139,445 (
     sensor:NIDS;
     detection_id:100061;
-    min_events:3;
-    severity_at_least:MEDIUM;
-    msg:"IPS Validate - High Reserved TCP Port";
+    min_events:2;
+    severity_at_least:HIGH;
+    msg:"IPS Validate - Outbound SMB to External Network";
     sid:310061;
-    rev:3;
-    category_type:NETWORK_ANOMALY;
-    priority:2;
+    rev:4;
+    category_type:POLICY_VIOLATION;
+    priority:1;
 )
 
 
-# ------------------------------------------------------------
-# 100062 - TCP 135
-# ------------------------------------------------------------
-
-detect tcp any any -> any 135 (
+detect tcp any any -> any 389,636,88 (
     sensor:NIDS;
     detection_id:100062;
     min_events:2;
-    severity_at_least:MEDIUM;
-    msg:"IPS Validate - TCP 135 Activity";
+    severity_at_least:HIGH;
+    msg:"IPS Validate - Outbound LDAP/Kerberos to External Network";
     sid:310062;
-    rev:2;
-    category_type:LATERAL_MOVEMENT;
-    priority:2;
+    rev:3;
+    category_type:POLICY_VIOLATION;
+    priority:1;
 )
 
 
-# ------------------------------------------------------------
-# 100063 - TCP 139
-# ------------------------------------------------------------
-
-detect tcp any any -> any 139 (
+detect tcp any any -> any 6666,6667,6668,6669 (
     sensor:NIDS;
     detection_id:100063;
-    min_events:2;
+    min_events:3;
     severity_at_least:MEDIUM;
-    msg:"IPS Validate - TCP 139 Activity";
+    msg:"IPS Validate - IRC Port Traffic";
     sid:310063;
-    rev:2;
-    category_type:LATERAL_MOVEMENT;
+    rev:3;
+    category_type:C2;
     priority:2;
 )
 
 
-# ------------------------------------------------------------
-# 100064 - TCP 445
-# ------------------------------------------------------------
-
-detect tcp any any -> any 445 (
+detect tcp any any -> any 31337,12345,27374 (
     sensor:NIDS;
     detection_id:100064;
     min_events:2;
-    severity_at_least:MEDIUM;
-    msg:"IPS Validate - TCP 445 Activity";
+    severity_at_least:HIGH;
+    msg:"IPS Validate - Legacy Trojan Backdoor Port Traffic";
     sid:310064;
-    rev:2;
-    category_type:LATERAL_MOVEMENT;
-    priority:2;
+    rev:3;
+    category_type:C2;
+    priority:1;
 )
 
 # ============================================================
 # 15. HIDS VALIDATION
 # ============================================================
 #
-# HIDS events are host events, not network packets.
-#
-# Therefore:
+# HIDS events are host events, not network packets, so the
+# header is "ip any any -> any any" and validation uses:
 #
 #   sensor:HIDS
 #   detection_id:<HIDS RULE>
 #
-# is used instead of pretending they are TCP/UDP packets.
+# Content conditions match the HIDS "details" text built in
+# hids/rule_engine.py (generate_details). Account names are
+# matched in their quoted position so that the *actor* (often
+# 'Administrator') does not trigger the rule.
 #
 # ============================================================
 
@@ -997,16 +959,17 @@ detect tcp any any -> any 445 (
 # Authentication
 # ------------------------------------------------------------
 
+# Network / RDP / cleartext logon failures, brute-force volume.
 detect ip any any -> any any (
     sensor:HIDS;
     detection_id:SEC-001;
-    min_events:3;
-    severity_at_least:MEDIUM;
     content_any:"LogonType: 3","LogonType: 10","LogonType: 8";
     nocase;
-    msg:"IPS Validate - HIDS Failed User Logon";
+    min_events:5;
+    severity_at_least:LOW;
+    msg:"IPS Validate - HIDS Failed Logon Brute Force";
     sid:320001;
-    rev:3;
+    rev:4;
     category_type:UNAUTHORIZED_ACCESS;
     priority:2;
 )
@@ -1015,13 +978,13 @@ detect ip any any -> any any (
 detect ip any any -> any any (
     sensor:HIDS;
     detection_id:AUTH-001;
-    min_events:2;
+    content_any:"credentials for 'administrator'","credentials for 'admin'","credentials for 'krbtgt'","credentials for 'guest'","credentials for 'defaultaccount'";
+    nocase;
+    min_events:3;
     severity_at_least:MEDIUM;
-    indicator:payload;
-    list:sensitive_account_signatures;
-    msg:"IPS Validate - Explicit Credential Logon";
+    msg:"IPS Validate - Explicit Credential Logon - Sensitive Account";
     sid:320002;
-    rev:3;
+    rev:4;
     category_type:UNAUTHORIZED_ACCESS;
     priority:2;
 )
@@ -1030,10 +993,10 @@ detect ip any any -> any any (
 detect ip any any -> any any (
     sensor:HIDS;
     detection_id:LOGON-001;
-    min_events:2;
-    severity_at_least:MEDIUM;
     content:" from ";
     nocase;
+    min_events:2;
+    severity_at_least:MEDIUM;
     msg:"IPS Validate - Remote Interactive Logon";
     sid:320003;
     rev:3;
@@ -1047,16 +1010,19 @@ detect ip any any -> any any (
 # Privilege / Account Manipulation
 # ------------------------------------------------------------
 
+# 4672 fires on every admin logon; machine accounts (NAME$)
+# are excluded and a burst is required.
 detect ip any any -> any any (
     sensor:HIDS;
     detection_id:PRV-001;
-    min_events:2;
-    severity_at_least:MEDIUM;
     indicator:payload;
     list:sensitive_privilege_signatures;
+    content_not:"$'";
+    min_events:3;
+    severity_at_least:MEDIUM;
     msg:"IPS Validate - Sensitive Privilege Assigned";
     sid:320004;
-    rev:3;
+    rev:4;
     category_type:PRIVILEGE_ESCALATION;
     priority:2;
 )
@@ -1065,27 +1031,27 @@ detect ip any any -> any any (
 detect ip any any -> any any (
     sensor:HIDS;
     detection_id:PRV-002;
-    severity_at_least:HIGH;
     indicator:payload;
     list:administrative_group_signatures;
-    msg:"IPS Validate - Security Group Membership Modified";
+    severity_at_least:HIGH;
+    msg:"IPS Validate - Privileged Group Membership Added";
     sid:320005;
-    rev:2;
+    rev:3;
     category_type:PRIVILEGE_ESCALATION;
     priority:1;
 )
 
 
+# Admin-like names and hidden ($-suffixed) user accounts.
 detect ip any any -> any any (
     sensor:HIDS;
     detection_id:PRV-003;
-    min_events:2;
+    content_any:"account 'admin","account 'guest'","account 'krbtgt'","account 'defaultaccount'","$' created by";
+    nocase;
     severity_at_least:MEDIUM;
-    indicator:payload;
-    list:sensitive_account_signatures;
-    msg:"IPS Validate - New Windows User Account";
+    msg:"IPS Validate - Suspicious New User Account";
     sid:320006;
-    rev:2;
+    rev:3;
     category_type:PERSISTENCE;
     priority:2;
 )
@@ -1094,43 +1060,42 @@ detect ip any any -> any any (
 detect ip any any -> any any (
     sensor:HIDS;
     detection_id:ACC-001;
-    min_events:2;
+    content_any:"account 'administrator'","account 'admin'","account 'krbtgt'","account 'guest'";
+    nocase;
     severity_at_least:MEDIUM;
-    indicator:payload;
-    list:sensitive_account_signatures;
-    msg:"IPS Validate - Account Locked Out";
+    msg:"IPS Validate - Sensitive Account Locked Out";
     sid:320007;
-    rev:2;
+    rev:3;
     category_type:UNAUTHORIZED_ACCESS;
     priority:2;
 )
 
 
+# Re-enabling built-in disabled accounts is a persistence trick.
 detect ip any any -> any any (
     sensor:HIDS;
     detection_id:ACC-002;
-    min_events:2;
-    severity_at_least:MEDIUM;
-    indicator:payload;
-    list:sensitive_account_signatures;
-    msg:"IPS Validate - User Account Enabled";
+    content_any:"account 'guest'","account 'administrator'","account 'defaultaccount'","account 'krbtgt'";
+    nocase;
+    severity_at_least:LOW;
+    msg:"IPS Validate - Built-in Account Enabled";
     sid:320008;
-    rev:3;
+    rev:4;
     category_type:PERSISTENCE;
-    priority:3;
+    priority:2;
 )
 
 
+# Disabling built-in accounts is normal hardening; only mass
+# disabling (account access removal, T1531) is validated.
 detect ip any any -> any any (
     sensor:HIDS;
     detection_id:ACC-003;
-    min_events:2;
-    severity_at_least:MEDIUM;
-    indicator:payload;
-    list:sensitive_account_signatures;
-    msg:"IPS Validate - User Account Disabled";
+    min_events:3;
+    severity_at_least:LOW;
+    msg:"IPS Validate - Multiple User Accounts Disabled";
     sid:320009;
-    rev:3;
+    rev:4;
     category_type:DEFENSE_EVASION;
     priority:3;
 )
@@ -1139,13 +1104,12 @@ detect ip any any -> any any (
 detect ip any any -> any any (
     sensor:HIDS;
     detection_id:ACC-004;
-    min_events:2;
+    content_any:"for 'administrator'","for 'admin'","for 'krbtgt'","for 'guest'","for 'defaultaccount'";
+    nocase;
     severity_at_least:MEDIUM;
-    indicator:payload;
-    list:sensitive_account_signatures;
-    msg:"IPS Validate - User Password Reset";
+    msg:"IPS Validate - Sensitive Account Password Reset";
     sid:320010;
-    rev:3;
+    rev:4;
     category_type:PERSISTENCE;
     priority:2;
 )
@@ -1164,7 +1128,7 @@ detect ip any any -> any any (
     list:suspicious_process_signatures;
     msg:"IPS Validate - Suspicious Process Execution";
     sid:320011;
-    rev:2;
+    rev:3;
     category_type:EXPLOIT;
     priority:1;
 )
@@ -1178,7 +1142,7 @@ detect ip any any -> any any (
     list:suspicious_powershell_signatures;
     msg:"IPS Validate - Suspicious PowerShell Activity";
     sid:320012;
-    rev:2;
+    rev:3;
     category_type:EXPLOIT;
     priority:1;
 )
@@ -1195,9 +1159,9 @@ detect ip any any -> any any (
     severity_at_least:HIGH;
     indicator:payload;
     list:suspicious_service_signatures;
-    msg:"IPS Validate - New Windows Service";
+    msg:"IPS Validate - Suspicious New Windows Service";
     sid:320013;
-    rev:2;
+    rev:3;
     category_type:PERSISTENCE;
     priority:1;
 )
@@ -1210,9 +1174,9 @@ detect ip any any -> any any (
     severity_at_least:MEDIUM;
     indicator:payload;
     list:critical_security_services;
-    msg:"IPS Validate - Windows Service Terminated";
+    msg:"IPS Validate - Security Service Terminated";
     sid:320014;
-    rev:3;
+    rev:4;
     category_type:DEFENSE_EVASION;
     priority:2;
 )
@@ -1251,15 +1215,17 @@ detect ip any any -> any any (
 )
 
 
+# 5007 fires for every Defender config change (including
+# signature updates). Only exclusion keys are validated.
 detect ip any any -> any any (
     sensor:HIDS;
     detection_id:MAL-003;
     severity_at_least:HIGH;
-    content_any:"C:\","C:\\",".exe",".dll","\Temp","\AppData","powershell";
+    content:"\Exclusions\";
     nocase;
     msg:"IPS Validate - Defender Exclusion Added";
     sid:320017;
-    rev:2;
+    rev:3;
     category_type:DEFENSE_EVASION;
     priority:1;
 )
@@ -1279,31 +1245,36 @@ detect ip any any -> any any (
 )
 
 
+# Group Policy refreshes change audit policy as the machine
+# account (NAME$); those are excluded.
 detect ip any any -> any any (
     sensor:HIDS;
     detection_id:AUDIT-001;
+    content:"Audit policy for ";
+    content_not:"$'";
+    nocase;
     min_events:2;
     severity_at_least:HIGH;
-    content:"Audit policy for ";
-    nocase;
     msg:"IPS Validate - Audit Policy Changed";
     sid:320019;
-    rev:2;
+    rev:3;
     category_type:DEFENSE_EVASION;
     priority:1;
 )
 
 
+# Application installers add firewall rules routinely; only a
+# larger burst is validated.
 detect ip any any -> any any (
     sensor:HIDS;
     detection_id:FW-001;
-    min_events:2;
-    severity_at_least:MEDIUM;
     content:"Firewall rule ";
     nocase;
-    msg:"IPS Validate - Windows Firewall Rule Added";
+    min_events:4;
+    severity_at_least:MEDIUM;
+    msg:"IPS Validate - Windows Firewall Rules Changed";
     sid:320020;
-    rev:3;
+    rev:4;
     category_type:DEFENSE_EVASION;
     priority:2;
 )
@@ -1320,7 +1291,7 @@ detect ip any any -> any any (
     severity_at_least:HIGH;
     indicator:payload;
     list:suspicious_scheduled_task_signatures;
-    msg:"IPS Validate - Scheduled Task Created";
+    msg:"IPS Validate - Suspicious Scheduled Task Created";
     sid:320021;
     rev:2;
     category_type:PERSISTENCE;
@@ -1333,108 +1304,131 @@ detect ip any any -> any any (
 # 16. HIGH-CONFIDENCE BLOCKING
 # ============================================================
 #
-# IMPORTANT:
-#
-# These are the ONLY BLOCK rules.
+# These are the ONLY BLOCK rules. They run inline in the NIDS
+# process and only when the packet already raised a NIDS alert.
 #
 # BLOCK requires:
 #
-#     indicator condition
+#     NIDS detection on the packet
+#          AND
+#     all rule conditions
 #          AND
 #     configured indicator list match
 #
-# No generic port or category detection is allowed to
-# directly block.
+# BLOCK rules must not use min_events or severity_at_least:
+# the inline path cannot evaluate them and skips the rule.
+#
+# IP reputation rules have no category_type on purpose: the
+# category is a filter, and no NIDS alert carries a
+# "threat intelligence" category.
 #
 # ============================================================
 
 
 # ------------------------------------------------------------
-# Known malicious source IP
+# Known malicious / C2 IPs (any NIDS detection + exact IOC)
 # ------------------------------------------------------------
 
 block ip any any -> any any (
+    sensor:NIDS;
     indicator:src_ip;
     list:malicious_ips;
     msg:"IPS Block - Known Malicious Source IP";
     sid:330001;
-    rev:1;
-    category_type:THREAT_INTELLIGENCE;
+    rev:2;
     priority:1;
 )
 
 
-# ------------------------------------------------------------
-# Known malicious destination IP
-# ------------------------------------------------------------
-
 block ip any any -> any any (
+    sensor:NIDS;
     indicator:dst_ip;
     list:malicious_ips;
     msg:"IPS Block - Known Malicious Destination IP";
     sid:330002;
-    rev:1;
-    category_type:THREAT_INTELLIGENCE;
+    rev:2;
     priority:1;
 )
 
 
-# ------------------------------------------------------------
-# Known C2 source IP
-# ------------------------------------------------------------
-
-block tcp any any -> any any (
+block ip any any -> any any (
+    sensor:NIDS;
     indicator:src_ip;
     list:c2_ips;
     msg:"IPS Block - Known C2 Source IP";
     sid:330003;
-    rev:1;
-    category_type:C2;
+    rev:2;
     priority:1;
 )
 
 
-# ------------------------------------------------------------
-# Known C2 destination IP
-# ------------------------------------------------------------
-
-block tcp any any -> any any (
+block ip any any -> any any (
+    sensor:NIDS;
     indicator:dst_ip;
     list:c2_ips;
     msg:"IPS Block - Known C2 Destination IP";
     sid:330004;
-    rev:1;
+    rev:2;
+    priority:1;
+)
+
+
+# ------------------------------------------------------------
+# High-confidence payloads, each tied to its NIDS detection
+# ------------------------------------------------------------
+
+block tcp any any -> any any (
+    sensor:NIDS;
+    detection_id:100025;
+    indicator:payload;
+    list:malicious_payload_signatures;
+    nocase;
+    msg:"IPS Block - PowerShell Encoded Command";
+    sid:330005;
+    rev:2;
     category_type:C2;
     priority:1;
 )
 
 
-# ------------------------------------------------------------
-# Known malicious payload
-# ------------------------------------------------------------
-
-block tcp any any -> any any (
-    indicator:payload;
-    list:malicious_payload_signatures;
-    msg:"IPS Block - Known Malicious Payload Signature";
-    sid:330005;
-    rev:1;
-    category_type:MALWARE;
-    priority:1;
-)
-
-
-# ------------------------------------------------------------
-# High-confidence SQL injection
-# ------------------------------------------------------------
-
 block tcp any any -> any 80,443,8080 (
+    sensor:NIDS;
+    detection_id:100002;
     indicator:payload;
     list:high_confidence_sqli_signatures;
     content_all:"UNION","SELECT";
     nocase;
     msg:"IPS Block - High Confidence SQL Injection";
     sid:330006;
+    rev:2;
+    category_type:EXPLOIT;
+    priority:1;
+)
+
+
+block tcp any any -> any any (
+    sensor:NIDS;
+    detection_id:100030;
+    indicator:payload;
+    list:malicious_payload_signatures;
+    content:"/dev/tcp/";
+    nocase;
+    msg:"IPS Block - Interactive Reverse Shell";
+    sid:330007;
+    rev:1;
+    category_type:C2;
+    priority:1;
+)
+
+
+block tcp any any -> any 80,443,8080 (
+    sensor:NIDS;
+    detection_id:100016;
+    indicator:payload;
+    list:log4j_signatures;
+    nocase;
+    msg:"IPS Block - Log4j JNDI Exploit";
+    sid:330008;
     rev:1;
     category_type:EXPLOIT;
     priority:1;

@@ -25,11 +25,17 @@ from logger import (
     console_event,
     console_alert,
     console_correlation,
-    log_event_json,
     log_security_alert_json,
     log_correlated_alert_json,
     EVENT_JSON_FILE,
 )
+from paths import (
+    DATA_DIR,
+    HIDS_COLLECTOR_CHECKPOINT_FILE,
+    HIDS_CONFIG_FILE,
+    HIDS_EVENTS_FILE,
+)
+from stop_signal import get_stop_event
 
 try:
     import win32event
@@ -40,7 +46,13 @@ except ImportError:
 
 # Default base and config paths
 BASE_DIR = Path(__file__).resolve().parent.parent
-DEFAULT_CONFIG_PATH = BASE_DIR / "config.yaml"
+DEFAULT_CONFIG_PATH = HIDS_CONFIG_FILE
+
+
+def _data_path(value: Union[str, Path]) -> Path:
+    """Config paths may be absolute or relative to the data folder."""
+    path = Path(value)
+    return path if path.is_absolute() else DATA_DIR / path
 
 
 def load_config(config_path: Optional[Union[str, Path]] = None) -> Dict[str, Any]:
@@ -57,14 +69,14 @@ def load_config(config_path: Optional[Union[str, Path]] = None) -> Dict[str, Any
             "polling_interval": 2,
             "checkpoint": {
                 "enabled": True,
-                "file": "logs/checkpoints.json",
+                "file": str(HIDS_COLLECTOR_CHECKPOINT_FILE),
             },
             "deduplication": {
                 "enabled": True,
             },
             "logging": {
                 "enabled": True,
-                "json_file": "logs/event.json",
+                "json_file": str(HIDS_EVENTS_FILE),
             },
         }
     }
@@ -165,17 +177,17 @@ class HIDSEngine:
         if checkpoint_path is not None:
             resolved_checkpoint = Path(checkpoint_path)
         else:
-            cp_file_rel = hids_settings.get("checkpoint", {}).get("file", "logs/checkpoints.json")
-            resolved_checkpoint = BASE_DIR / cp_file_rel
+            cp_file = hids_settings.get("checkpoint", {}).get("file") or HIDS_COLLECTOR_CHECKPOINT_FILE
+            resolved_checkpoint = _data_path(cp_file)
 
         # Logging configuration
         if json_log_path is not None:
             self.json_log_path = Path(json_log_path)
         else:
-            json_log_rel = hids_settings.get("logging", {}).get("json_file", "logs/event.json")
-            self.json_log_path = BASE_DIR / json_log_rel
+            json_log_file = hids_settings.get("logging", {}).get("json_file") or HIDS_EVENTS_FILE
+            self.json_log_path = _data_path(json_log_file)
 
-        self.logger = logger or get_logger()
+        self.logger = logger or get_logger(component="hids")
 
         # Collector
         self.collector = collector or WindowsEventCollector(
@@ -202,7 +214,7 @@ class HIDSEngine:
         """
         Process a single raw event through the complete pipeline:
         1. Normalize
-        2. Log live event telemetry to event.json and console
+        2. Show live event telemetry on the console (not stored)
         3. Rule evaluation
         4. Correlation
         5. Structured alert logging to event.json and console
@@ -218,12 +230,13 @@ class HIDSEngine:
         if norm_event is None:
             return None, [], []
 
-        # 1. Log ordinary event to event.json and console
+        # 1. Show ordinary event on the console only.
+        #    Raw telemetry is NOT written to event.json;
+        #    event.json stores alerts and correlated alerts only.
         try:
-            log_event_json(norm_event, json_path=self.json_log_path)
             console_event(norm_event)
         except Exception as e:
-            self.logger.debug("Event logging error: %s", e)
+            self.logger.debug("Event console output error: %s", e)
 
         # 2. Rule evaluation
         rule_matches: List[RuleMatch] = []
@@ -371,4 +384,6 @@ def run_hids(stop_event: Any = None):
 
 
 if __name__ == "__main__":
-    run_hids()
+    # Under the service, stop cleanly when the service stops
+    # (None when run by hand: runs until Ctrl+C).
+    run_hids(stop_event=get_stop_event())

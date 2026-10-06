@@ -1,8 +1,26 @@
+# IDSIPS network configuration (default template)
+#
+# Installed copy: %ProgramData%\IDSIPS\config\config.yml
+# Edits there are kept on upgrade. Restart the IDSIPS service
+# after changing it.
+#
+# HOME_NET    Networks treated as "home". Only traffic to/from
+#             these networks is inspected.
+#             auto -> IPv4 subnets of the active adapters
+#
+# INTERFACES  Adapters to capture on (names as in
+#             Get-NetAdapter).
+#             auto -> every adapter that is up
+#
+# Example of explicit values:
+#
+#   network:
+#     HOME_NET:
+#       - "10.200.10.0/23"
+#     INTERFACES:
+#       - name: "Wi-Fi"
+#       - name: "Ethernet"
+
 network:
-  HOME_NET:
-    - "10.200.10.0/23"
-
-  INTERFACES:
-    - name: "Wi-Fi"
-
-    - name: "Ethernet"
+  HOME_NET: auto
+  INTERFACES: auto

@@ -2,6 +2,7 @@ import json
 from pathlib import Path
 
 from alert_manager.schema.alert_schema import AlertSchema
+from rotation import JsonlTail
 
 class HIDSAdapter:
     """
@@ -12,86 +13,45 @@ class HIDSAdapter:
     - Ignore non-alert HIDS events.
     - Convert HIDS alert records into Alert Manager input.
     - Maintain a checkpoint so old alerts are not processed again.
+    - Follow event.json across rotations (see rotation.py).
     """
 
     def __init__(self, log_path, checkpoint_path):
         self.log_path = Path(log_path)
         self.checkpoint_path = Path(checkpoint_path)
 
-    def _load_checkpoint(self):
-        if not self.checkpoint_path.exists():
-            return 0
-
-        try:
-            with open(self.checkpoint_path, "r", encoding="utf-8") as f:
-                data = json.load(f)
-
-            return int(data.get("offset", 0))
-
-        except (json.JSONDecodeError, ValueError, TypeError):
-            return 0
-
-    def _save_checkpoint(self, offset):
-        self.checkpoint_path.parent.mkdir(
-            parents=True,
-            exist_ok=True
-        )
-
-        temp_path = self.checkpoint_path.with_suffix(".tmp")
-
-        with open(temp_path, "w", encoding="utf-8") as f:
-            json.dump({"offset": offset}, f)
-
-        temp_path.replace(self.checkpoint_path)
+        # Existing {"offset": N} checkpoints stay valid.
+        self.tail = JsonlTail(self.log_path, self.checkpoint_path)
 
     def read_new_alerts(self):
         """
         Read only data appended since the previous checkpoint.
         """
 
-        if not self.log_path.exists():
-            return []
-
-        offset = self._load_checkpoint()
         alerts = []
 
-        with open(
-            self.log_path,
-            "r",
-            encoding="utf-8"
-        ) as f:
+        # Complete lines only: a line still being written is left
+        # for the next call, so a corrupt line can be skipped
+        # instead of stopping the reader.
+        for line in self.tail.read_lines():
 
-            f.seek(offset)
+            try:
+                event = json.loads(line)
 
-            while True:
-                line = f.readline()
+            except json.JSONDecodeError:
+                print("[HIDS ADAPTER] Skipping corrupted line in event.json")
+                continue
 
-                if not line:
-                    break
+            # HIDS adapter processes ONLY alerts.
+            if event.get("type") != "alert":
+                continue
 
-                current_offset = f.tell()
-
-                line = line.strip()
-
-                if not line:
-                    self._save_checkpoint(current_offset)
-                    continue
-
-                try:
-                    event = json.loads(line)
-
-                except json.JSONDecodeError:
-                    # Do not advance past an incomplete JSON line.
-                    break
-
-                # HIDS adapter processes ONLY alerts.
-                if event.get("type") != "alert":
-                    self._save_checkpoint(current_offset)
-                    continue
-
+            try:
                 alerts.append(self.normalize_alert(event))
+            except Exception as e:
+                print(f"[HIDS ADAPTER] Skipping malformed alert: {e}")
 
-                self._save_checkpoint(current_offset)
+        self.tail.commit()
 
         return alerts
 

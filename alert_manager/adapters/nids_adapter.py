@@ -3,6 +3,7 @@ from pathlib import Path
 from typing import Optional
 
 from alert_manager.schema.alert_schema import AlertSchema
+from rotation import JsonlTail
 
 
 class NIDSAdapter:
@@ -26,47 +27,36 @@ class NIDSAdapter:
 
         self.checkpoint_path = Path(checkpoint_path)
 
-    def _load_checkpoint(self) -> int:
-        """Return the number of already processed lines."""
-
-        if not self.checkpoint_path.exists():
-            return 0
-
-        try:
-            with open(
-                self.checkpoint_path,
-                "r",
-                encoding="utf-8",
-            ) as f:
-                data = json.load(f)
-
-            return int(data.get("line_number", 0))
-
-        except (
-            json.JSONDecodeError,
-            ValueError,
-            TypeError,
-        ):
-            return 0
-
-    def _save_checkpoint(self, line_number: int) -> None:
-        """Save the number of processed lines."""
-
-        self.checkpoint_path.parent.mkdir(
-            parents=True,
-            exist_ok=True,
+        # Byte-offset reader that follows alerts.json across
+        # rotations (see rotation.py).
+        self.tail = JsonlTail(
+            self.alerts_path,
+            self.checkpoint_path,
+            legacy_offset_loader=self._line_number_to_offset,
         )
 
-        with open(
-            self.checkpoint_path,
-            "w",
-            encoding="utf-8",
-        ) as f:
-            json.dump(
-                {"line_number": line_number},
-                f,
-                indent=2,
-            )
+    def _line_number_to_offset(self, data: dict) -> int:
+        """
+        Convert the older {"line_number": N} checkpoint to the
+        byte offset after line N, so alerts are not re-read.
+        """
+
+        line_number = int(data.get("line_number", 0))
+        offset = 0
+
+        if line_number <= 0 or not self.alerts_path.exists():
+            return 0
+
+        with open(self.alerts_path, "rb") as f:
+            for _ in range(line_number):
+                raw = f.readline()
+
+                if not raw:
+                    break
+
+                offset += len(raw)
+
+        return offset
 
     @staticmethod
     def _normalize_severity(severity) -> str:
@@ -225,72 +215,32 @@ class NIDSAdapter:
         from alerts.json.
         """
 
-        if not self.alerts_path.exists():
-            return []
-
-        checkpoint = self._load_checkpoint()
-
         normalized_alerts = []
 
-        # Important:
-        # If alerts.json is empty, the loop below
-        # will not execute. Therefore we initialize
-        # this before the loop.
-        last_line_number = checkpoint
+        # Complete new lines only; handles rotation and a
+        # line that is still being written.
+        for line in self.tail.read_lines():
 
-        with open(
-            self.alerts_path,
-            "r",
-            encoding="utf-8",
-        ) as f:
+            try:
+                alert_data = json.loads(line)
 
-            for line_number, line in enumerate(
-                f,
-                start=1,
-            ):
+            except json.JSONDecodeError:
+                # Ignore corrupted lines.
+                continue
 
-                # Keep track of the latest line
-                # that exists in the file.
-                last_line_number = line_number
+            # Only process actual NIDS alerts.
+            if alert_data.get(
+                "event_type"
+            ) != "alert":
+                continue
 
-                # Skip lines that were already processed.
-                if line_number <= checkpoint:
-                    continue
-
-                line = line.strip()
-
-                # Ignore empty lines.
-                if not line:
-                    continue
-
-                try:
-                    alert_data = json.loads(line)
-
-                except json.JSONDecodeError:
-                    # Ignore incomplete/corrupted lines.
-                    continue
-
-                # Only process actual NIDS alerts.
-                if alert_data.get(
-                    "event_type"
-                ) != "alert":
-                    continue
-
-                normalized = self.normalize_alert(
-                    alert_data
-                )
-
+            try:
                 normalized_alerts.append(
-                    normalized
+                    self.normalize_alert(alert_data)
                 )
+            except Exception as e:
+                print(f"[NIDS ADAPTER] Skipping malformed alert: {e}")
 
-        # Save the last processed line.
-        #
-        # IMPORTANT:
-        # Use last_line_number, NOT line_number.
-        # This works even when alerts.json is empty.
-        self._save_checkpoint(
-            last_line_number
-        )
+        self.tail.commit()
 
         return normalized_alerts

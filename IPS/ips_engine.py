@@ -51,6 +51,7 @@ Therefore:
       BLOCK
 """
 
+from collections import OrderedDict
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -64,7 +65,13 @@ import re
 
 IPS_DIR = Path(__file__).resolve().parent
 
-RULES_FILE = IPS_DIR / "ips.rules"
+# Editable copy in the data folder (seeded from IPS/ips.rules)
+from paths import IPS_RULES_FILE as RULES_FILE  # noqa: E402
+
+# How many (event, rule) decisions to remember so the same
+# alert is not decided twice when it appears in several
+# correlations (one per category and per IP).
+DECISION_CACHE_SIZE = 10000
 
 
 try:
@@ -184,6 +191,12 @@ class IPSEngine:
         )
 
         self.rules: List[IPSRule] = []
+
+        # (trigger_event_id, rule sid) -> None, oldest first
+        self._decided: "OrderedDict[tuple, None]" = OrderedDict()
+
+        # trigger_event_id of events that got any decision
+        self._decided_events: "OrderedDict[str, None]" = OrderedDict()
 
         self.load_rules()
 
@@ -2724,27 +2737,40 @@ class IPSEngine:
 
 
         # ----------------------------------------------------
-        # Source events contain the actual NIDS/HIDS
-        # evidence.
+        # Evaluate only the NEW event that produced this
+        # correlation. Earlier events in source_events were
+        # already evaluated when they arrived; evaluating
+        # them again would repeat the same decisions.
         # ----------------------------------------------------
 
-        source_events = (
-            correlation_event.get(
-                "source_events",
-                []
-            )
+        trigger_event = correlation_event.get(
+            "trigger_event"
         )
 
+        trigger_event_id = correlation_event.get(
+            "trigger_event_id"
+        )
 
-        # ----------------------------------------------------
-        # Fallback if source_events is unavailable.
-        # ----------------------------------------------------
-
-        if not source_events:
+        if trigger_event:
 
             source_events = [
-                correlation_event
+                trigger_event
             ]
+
+        else:
+
+            # Older correlation lines without trigger_event
+            source_events = (
+                correlation_event.get(
+                    "source_events",
+                    []
+                )
+                or [correlation_event]
+            )
+
+        correlation_category = str(
+            correlation_event.get("category") or ""
+        ).upper()
 
 
         # ====================================================
@@ -2815,6 +2841,39 @@ class IPSEngine:
 
             for rule in self.rules:
 
+                # --------------------------------------------
+                # A categorized rule is evaluated only on the
+                # correlation of its own category, so that
+                # min_events counts the right bucket.
+                # --------------------------------------------
+
+                rule_category = str(
+                    rule.options.get("category_type") or ""
+                ).upper()
+
+                if (
+                    rule_category
+                    and correlation_category
+                    and rule_category != correlation_category
+                ):
+                    continue
+
+                # --------------------------------------------
+                # Same event already decided by this rule
+                # (it appears once per category and per IP).
+                # --------------------------------------------
+
+                decision_key = (
+                    trigger_event_id,
+                    rule.options.get("sid")
+                )
+
+                if (
+                    trigger_event_id
+                    and decision_key in self._decided
+                ):
+                    continue
+
                 matched, indicator = (
                     self._rule_matches(
                         rule,
@@ -2841,8 +2900,40 @@ class IPSEngine:
                     decision
                 )
 
+                if trigger_event_id:
+                    self._remember_decision(decision_key)
+
 
         return decisions
+
+
+    def _remember_decision(
+        self,
+        decision_key: tuple
+    ):
+        """Remember a decision, dropping the oldest when full."""
+
+        self._decided[decision_key] = None
+
+        if len(self._decided) > DECISION_CACHE_SIZE:
+            self._decided.popitem(last=False)
+
+        self._decided_events[decision_key[0]] = None
+
+        if len(self._decided_events) > DECISION_CACHE_SIZE:
+            self._decided_events.popitem(last=False)
+
+
+    def event_has_decision(
+        self,
+        trigger_event_id: Optional[str]
+    ) -> bool:
+        """True if this event already produced an IPS decision."""
+
+        return bool(
+            trigger_event_id
+            and trigger_event_id in self._decided_events
+        )
 
 
     # ========================================================

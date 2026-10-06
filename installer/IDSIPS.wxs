@@ -1,0 +1,70 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    IDSIPS MSI (WiX Toolset v5). Built by build.ps1:
+
+        wix build installer\IDSIPS.wxs -arch x64 -ext WixToolset.Util.wixext
+            -d StageDir=<staged files> -d ProductVersion=<x.y.z> -o <msi>
+
+    Installs the staged folder (bundled runtime + application) to
+    C:\Program Files\IDSIPS, then runs installer\install_actions.ps1
+    as SYSTEM to prepare %ProgramData%\IDSIPS, register the service
+    and start it.
+
+    Public properties (msiexec ... PROPERTY=value):
+        HOME_NET     "auto" (default) or "10.0.0.0/8,192.168.1.0/24"
+        INTERFACES   "auto" (default) or "Ethernet,Wi-Fi"
+-->
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs">
+
+  <Package
+      Name="IDSIPS Security Service"
+      Manufacturer="IDSIPS"
+      Version="$(var.ProductVersion)"
+      UpgradeCode="{6F3B2C1E-8A4D-4E7B-9C5A-2D1F0B7E3A91}"
+      Scope="perMachine"
+      Compressed="yes">
+
+    <SummaryInformation Description="IDSIPS host and network intrusion detection and prevention" />
+
+    <MajorUpgrade DowngradeErrorMessage="A newer version of [ProductName] is already installed." />
+
+    <MediaTemplate EmbedCab="yes" />
+
+    <!-- Installer properties -->
+    <Property Id="HOME_NET" Value="auto" Secure="yes" />
+    <Property Id="INTERFACES" Value="auto" Secure="yes" />
+
+    <StandardDirectory Id="ProgramFiles64Folder">
+      <Directory Id="INSTALLFOLDER" Name="IDSIPS" />
+    </StandardDirectory>
+
+    <Feature Id="Main" Title="IDSIPS" Level="1">
+      <Files Directory="INSTALLFOLDER" Include="$(var.StageDir)\**" />
+    </Feature>
+
+    <!--
+        Install actions (deferred, as SYSTEM, after the files are
+        copied). "[INSTALLFOLDER]." avoids a trailing backslash
+        escaping the closing quote.
+    -->
+    <SetProperty
+        Id="InstallActions"
+        Sequence="execute"
+        Before="InstallActions"
+        Value="&quot;[System64Folder]WindowsPowerShell\v1.0\powershell.exe&quot; -NoProfile -NonInteractive -ExecutionPolicy Bypass -File &quot;[INSTALLFOLDER]installer\install_actions.ps1&quot; -InstallDir &quot;[INSTALLFOLDER].&quot; -HomeNet &quot;[HOME_NET]&quot; -Interfaces &quot;[INTERFACES]&quot;" />
+
+    <CustomAction
+        Id="InstallActions"
+        BinaryRef="Wix4UtilCA_$(sys.BUILDARCHSHORT)"
+        DllEntry="WixQuietExec"
+        Execute="deferred"
+        Impersonate="no"
+        Return="check" />
+
+    <InstallExecuteSequence>
+      <!-- Install, repair and upgrade; not on uninstall -->
+      <Custom Action="InstallActions" After="InstallFiles" Condition="NOT REMOVE" />
+    </InstallExecuteSequence>
+
+  </Package>
+</Wix>

@@ -9,27 +9,32 @@ Provides consolidated, thread-safe HIDS logging:
 from datetime import datetime, timezone, timedelta
 import json
 import logging
+from logging.handlers import RotatingFileHandler
 from pathlib import Path
 import socket
 import sys
 import threading
 from typing import Any, Dict, List, Optional, Union
 
+from paths import HIDS_EVENTS_FILE, LOG_DIR
+
 # ============================================================
 # Project Paths & Timezone (IST - UTC+05:30)
 # ============================================================
 
 BASE_DIR = Path(__file__).resolve().parent
-LOG_DIR = BASE_DIR / "logs"
-LOG_DIR.mkdir(exist_ok=True)
 
-# Persistent HIDS event logging file
-EVENT_JSON_FILE = LOG_DIR / "event.json"
+# Persistent HIDS alert logging file (alerts only)
+EVENT_JSON_FILE = HIDS_EVENTS_FILE
 JSON_LOG_FILE = EVENT_JSON_FILE
 LOG_FILE = EVENT_JSON_FILE
 
 # Windows service lifecycle log
 SERVICE_LOG_FILE = LOG_DIR / "idsips.log"
+
+# Text log rotation (per process, see get_logger)
+TEXT_LOG_MAX_BYTES = 10 * 1024 * 1024
+TEXT_LOG_BACKUPS = 5
 
 # Indian Standard Time (IST) timezone
 IST = timezone(timedelta(hours=5, minutes=30), name="Asia/Kolkata")
@@ -193,6 +198,7 @@ def console_correlation(alert: Any) -> None:
 def write_json_log(data: Dict[str, Any], json_path: Optional[Union[str, Path]] = None) -> None:
     """
     Append one structured JSON record to event.json (JSON Lines format).
+    Not rotated: all alerts are kept.
     Thread-safe and fails gracefully without crashing HIDS.
     """
     target_file = Path(json_path) if json_path else EVENT_JSON_FILE
@@ -346,14 +352,35 @@ def format_correlated_alert(alert: Any) -> str:
     )
 
 
+def _has_interactive_console() -> bool:
+    """
+    Return True only when stdout is attached to a real console.
+
+    When running under the Windows service (or as a worker started by it),
+    there is no console, so console output would be lost.
+    """
+    try:
+        return sys.stdout is not None and sys.stdout.isatty()
+    except Exception:
+        return False
+
+
 def get_logger(
-    log_file: Optional[Union[str, Path]] = None
+    log_file: Optional[Union[str, Path]] = None,
+    console: Optional[bool] = None,
+    component: Optional[str] = None
 ) -> logging.Logger:
     """
-    Return the IDSIPS service logger.
+    Return the IDSIPS logger.
 
-    Service lifecycle messages are written to logs/idsips.log
-    and also displayed in the console.
+    Messages are written to logs/idsips.log (service), or to
+    logs/<component>.log when a component name is given. Each
+    process uses its own file, because Windows cannot rotate a
+    file that another process holds open. Files rotate at 10 MB,
+    5 backups.
+
+    They are also displayed in the console when one is attached
+    (console=None auto-detects; pass True/False to force it).
     """
 
     logger = logging.getLogger("IDSIPS")
@@ -366,14 +393,22 @@ def get_logger(
     logger.propagate = False
 
     # --------------------------------------------------------
-    # File handler - logs/idsips.log
+    # Rotating file handler
     # --------------------------------------------------------
-    target_file = Path(log_file) if log_file else SERVICE_LOG_FILE
+    if log_file:
+        target_file = Path(log_file)
+    elif component:
+        target_file = LOG_DIR / f"{component}.log"
+    else:
+        target_file = SERVICE_LOG_FILE
+
     target_file.parent.mkdir(parents=True, exist_ok=True)
 
-    file_handler = logging.FileHandler(
+    file_handler = RotatingFileHandler(
         target_file,
         mode="a",
+        maxBytes=TEXT_LOG_MAX_BYTES,
+        backupCount=TEXT_LOG_BACKUPS,
         encoding="utf-8"
     )
 
@@ -386,10 +421,14 @@ def get_logger(
     logger.addHandler(file_handler)
 
     # --------------------------------------------------------
-    # Console handler
+    # Console handler - skipped when running as a service
     # --------------------------------------------------------
-    console_handler = logging.StreamHandler(sys.stdout)
-    console_handler.setFormatter(formatter)
-    logger.addHandler(console_handler)
+    if console is None:
+        console = _has_interactive_console()
+
+    if console:
+        console_handler = logging.StreamHandler(sys.stdout)
+        console_handler.setFormatter(formatter)
+        logger.addHandler(console_handler)
 
     return logger

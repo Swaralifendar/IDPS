@@ -35,7 +35,7 @@ except ImportError:
 # legacy collect_system_events() helper below); HIDSEngine and service.py
 # always resolve and pass the config-driven path explicitly.
 BASE_DIR = Path(__file__).resolve().parent.parent
-DEFAULT_CHECKPOINT_FILE = BASE_DIR / "logs" / "checkpoints.json"
+from paths import HIDS_COLLECTOR_CHECKPOINT_FILE as DEFAULT_CHECKPOINT_FILE  # noqa: E402
 
 # Standard security channels to monitor
 DEFAULT_MONITORED_CHANNELS = [

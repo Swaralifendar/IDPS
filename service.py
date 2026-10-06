@@ -5,9 +5,44 @@ import servicemanager
 
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 from logger import get_logger
+from paths import APP_DIR, DATA_DIR, WORKER_LOG_DIR, ensure_data_layout
+from rotation import rotate_if_needed
+from stop_signal import create_stop_event
+from version import __version__
+
+
+# How often the service checks that its workers are still alive.
+WATCHDOG_INTERVAL_MS = 5000
+
+# Restart backoff: 5s, 10s, 20s, ... capped at 5 minutes.
+RESTART_BASE_DELAY_SECONDS = 5
+RESTART_MAX_DELAY_SECONDS = 300
+
+# A worker that runs this long after a restart is considered stable
+# and its backoff is reset.
+STABLE_RUN_SECONDS = 60
+
+# On service stop, workers get this long to exit on their own
+# (save checkpoints, close WinDivert) before they are killed.
+GRACEFUL_STOP_SECONDS = 15
+
+# Worker stdout/stderr logs (logs\workers\<name>.log), rotated
+# when a worker is (re)started.
+WORKER_LOG_MAX_BYTES = 10 * 1024 * 1024
+WORKER_LOG_BACKUPS = 3
+
+
+# name -> (process attribute, command-line arguments, working directory)
+WORKERS = {
+    "HIDS": ("hids_process", ["-m", "hids.hids"], APP_DIR),
+    "NIDS": ("nids_process", [str(APP_DIR / "NIDS" / "capture.py")], APP_DIR / "NIDS"),
+    "Correlation": ("correlation_process", ["-m", "alert_manager.correlation_worker"], APP_DIR),
+    "IPS": ("ips_process", ["-m", "IPS.ips_worker"], APP_DIR),
+}
 
 
 class IDSIPSService(win32serviceutil.ServiceFramework):
@@ -22,316 +57,239 @@ class IDSIPSService(win32serviceutil.ServiceFramework):
         # Event used to tell the service when Windows requests a stop.
         self.stop_event = win32event.CreateEvent(None, 0, 0, None)
 
-        # HIDS worker process
+        # Named event that tells the workers to stop (stop_signal.py)
+        self.worker_stop_event = None
+
+        # Worker processes
         self.hids_process = None
-
-        # NIDS worker process
         self.nids_process = None
-
-        # Correlation worker process
         self.correlation_process = None
-
-        # IPS worker process
         self.ips_process = None
 
-        # Path to the HIDS controller
-        self.hids_engine = (
-            Path(__file__).resolve().parent
-            / "hids"
-            / "hids.py"
-        )
-
-        # Path to the existing NIDS capture script
-        self.nids_capture = (
-            Path(__file__).resolve().parent
-            / "NIDS"
-            / "capture.py"
-        )
-
-        # Path to the correlation worker
-        self.correlation_worker = (
-            Path(__file__).resolve().parent
-            / "alert_manager"
-            / "correlation_worker.py"
-        )
-
-        # Path to the IPS worker
-        self.ips_worker = (
-            Path(__file__).resolve().parent
-            / "IPS"
-            / "ips_worker.py"
-        )
-
-        # Python interpreter used by the service
-        self.python_executable = (
-            Path(__file__).resolve().parent
-            / "runtime"
-            / "python.exe"
-        )
+        # Python interpreter used by the workers
+        self.python_executable = APP_DIR / "runtime" / "python.exe"
 
         # Project root
-        self.project_root = Path(__file__).resolve().parent
+        self.project_root = APP_DIR
 
-    def start_hids_worker(self, logger):
-        """Start the HIDS monitoring process."""
+        # Watchdog restart state per worker
+        self.worker_state = {
+            name: {
+                "failures": 0,
+                "started_at": 0.0,
+                "next_restart": None,
+            }
+            for name, _, _ in self.worker_specs()
+        }
+
+    def worker_specs(self):
+        """Return (name, process attribute, start method) for each worker."""
+        return [
+            (name, attr, lambda logger, name=name: self.start_worker(name, logger))
+            for name, (attr, _, _) in WORKERS.items()
+        ]
+
+    # ========================================================
+    # START / WATCHDOG
+    # ========================================================
+
+    def start_worker(self, name, logger):
+        """Start one worker, with stdout/stderr in logs\\workers\\<name>.log."""
+        attr, args, cwd = WORKERS[name]
+
         try:
-            self.hids_process = subprocess.Popen(
-                [
-                    str(self.python_executable),
-                    "-m",
-                    "hids.hids"
-                ],
-                cwd=str(self.project_root),
-                creationflags=subprocess.CREATE_NO_WINDOW
-            )
+            WORKER_LOG_DIR.mkdir(parents=True, exist_ok=True)
+            log_path = WORKER_LOG_DIR / f"{name.lower()}.log"
 
-            logger.info(
-                f"HIDS worker started. PID: {self.hids_process.pid}"
-            )
+            # The previous process has exited, so the file can be rotated
+            rotate_if_needed(log_path, WORKER_LOG_MAX_BYTES, WORKER_LOG_BACKUPS)
+
+            with open(log_path, "ab") as log_file:
+                process = subprocess.Popen(
+                    # -u: unbuffered, so output reaches the log at once
+                    [str(self.python_executable), "-u", *args],
+                    cwd=str(cwd),
+                    stdout=log_file,
+                    stderr=subprocess.STDOUT,
+                    creationflags=subprocess.CREATE_NO_WINDOW
+                )
+
+            setattr(self, attr, process)
+
+            logger.info(f"{name} worker started. PID: {process.pid}")
 
         except Exception as e:
-            logger.exception(
-                f"Failed to start HIDS worker: {e}"
-            )
+            logger.exception(f"Failed to start {name} worker: {e}")
 
-    def start_nids_worker(self, logger):
-        """Start the existing NIDS capture process."""
-        try:
-            self.nids_process = subprocess.Popen(
-                [
-                    str(self.python_executable),
-                    str(self.nids_capture)
-                ],
-                cwd=str(self.nids_capture.parent),
-                creationflags=subprocess.CREATE_NO_WINDOW
-            )
+    def check_workers(self, logger):
+        """Restart any worker that has exited, with exponential backoff."""
+        now = time.monotonic()
 
-            logger.info(
-                f"NIDS worker started. PID: {self.nids_process.pid}"
-            )
+        for name, attr, start_worker in self.worker_specs():
+            process = getattr(self, attr)
+            state = self.worker_state[name]
 
-        except Exception as e:
-            logger.exception(
-                f"Failed to start NIDS worker: {e}"
-            )
-
-    def start_correlation_worker(self, logger):
-        """Start the real-time correlation worker."""
-        try:
-            self.correlation_process = subprocess.Popen(
-                [
-                    str(self.python_executable),
-                    "-m",
-                    "alert_manager.correlation_worker"
-                ],
-                cwd=str(self.project_root),
-                creationflags=subprocess.CREATE_NO_WINDOW
-            )
-
-            logger.info(
-                "Correlation worker started. "
-                f"PID: {self.correlation_process.pid}"
-            )
-
-        except Exception as e:
-            logger.exception(
-                f"Failed to start correlation worker: {e}"
-            )
-
-    def start_ips_worker(self, logger):
-        """Start the IPS worker."""
-        try:
-            self.ips_process = subprocess.Popen(
-                [
-                    str(self.python_executable),
-                    "-m",
-                    "IPS.ips_worker"
-                ],
-                cwd=str(self.project_root),
-                creationflags=subprocess.CREATE_NO_WINDOW
-            )
-
-            logger.info(
-                "IPS worker started. "
-                f"PID: {self.ips_process.pid}"
-            )
-
-        except Exception as e:
-            logger.exception(
-                f"Failed to start IPS worker: {e}"
-            )
-
-    def stop_hids_worker(self, logger):
-        """Stop the HIDS monitoring process."""
-        if self.hids_process is not None:
-            try:
-                if self.hids_process.poll() is None:
-                    logger.info("Stopping HIDS worker...")
-
-                    self.hids_process.terminate()
-                    self.hids_process.wait(timeout=10)
-
-                    logger.info("HIDS worker stopped.")
-
-            except subprocess.TimeoutExpired:
-                logger.warning(
-                    "HIDS worker did not stop gracefully. "
-                    "Terminating it."
-                )
-
-                self.hids_process.kill()
-
-            except Exception as e:
-                logger.exception(
-                    f"Error stopping HIDS worker: {e}"
-                )
-
-            finally:
-                self.hids_process = None
-
-    def stop_nids_worker(self, logger):
-        """Stop the NIDS capture process."""
-        if self.nids_process is not None:
-            try:
-                if self.nids_process.poll() is None:
-                    logger.info("Stopping NIDS worker...")
-
-                    self.nids_process.terminate()
-                    self.nids_process.wait(timeout=10)
-
-                    logger.info("NIDS worker stopped.")
-
-            except subprocess.TimeoutExpired:
-                logger.warning(
-                    "NIDS worker did not stop gracefully. "
-                    "Terminating it."
-                )
-
-                self.nids_process.kill()
-
-            except Exception as e:
-                logger.exception(
-                    f"Error stopping NIDS worker: {e}"
-                )
-
-            finally:
-                self.nids_process = None
-
-    def stop_correlation_worker(self, logger):
-        """Stop the correlation worker."""
-        if self.correlation_process is not None:
-            try:
-                if self.correlation_process.poll() is None:
+            # Worker is running
+            if process is not None and process.poll() is None:
+                if (
+                    state["failures"]
+                    and now - state["started_at"] >= STABLE_RUN_SECONDS
+                ):
                     logger.info(
-                        "Stopping correlation worker..."
+                        f"{name} worker is stable again. "
+                        "Restart backoff reset."
                     )
+                    state["failures"] = 0
+                continue
 
-                    self.correlation_process.terminate()
-                    self.correlation_process.wait(timeout=10)
+            # Worker just found dead: schedule a restart
+            if state["next_restart"] is None:
+                exit_code = (
+                    process.returncode if process is not None else None
+                )
 
-                    logger.info(
-                        "Correlation worker stopped."
-                    )
+                delay = min(
+                    RESTART_BASE_DELAY_SECONDS * (2 ** state["failures"]),
+                    RESTART_MAX_DELAY_SECONDS
+                )
 
-            except subprocess.TimeoutExpired:
+                state["failures"] += 1
+                state["next_restart"] = now + delay
+
                 logger.warning(
-                    "Correlation worker did not stop gracefully. "
-                    "Terminating it."
+                    f"{name} worker is not running "
+                    f"(exit code: {exit_code}). "
+                    f"Restarting in {delay} seconds "
+                    f"(attempt {state['failures']}). "
+                    f"See {WORKER_LOG_DIR / (name.lower() + '.log')}"
                 )
+                continue
 
-                self.correlation_process.kill()
+            # Backoff elapsed: restart it
+            if now >= state["next_restart"]:
+                state["next_restart"] = None
+                setattr(self, attr, None)
 
-            except Exception as e:
-                logger.exception(
-                    f"Error stopping correlation worker: {e}"
-                )
+                logger.info(f"Restarting {name} worker...")
+                start_worker(logger)
+                state["started_at"] = time.monotonic()
 
-            finally:
-                self.correlation_process = None
+    # ========================================================
+    # STOP
+    # ========================================================
 
-    def stop_ips_worker(self, logger):
-        """Stop the IPS worker."""
-        if self.ips_process is not None:
+    def stop_workers(self, logger):
+        """
+        Ask all workers to stop (named event), wait up to
+        GRACEFUL_STOP_SECONDS, then kill any that are left.
+        """
+        if self.worker_stop_event is not None:
+            win32event.SetEvent(self.worker_stop_event)
+
+        deadline = time.monotonic() + GRACEFUL_STOP_SECONDS
+
+        while time.monotonic() < deadline:
+            running = [
+                name
+                for name, (attr, _, _) in WORKERS.items()
+                if getattr(self, attr) is not None
+                and getattr(self, attr).poll() is None
+            ]
+
+            if not running:
+                break
+
+            # Keep Windows informed while waiting
+            self.ReportServiceStatus(
+                win32service.SERVICE_STOP_PENDING,
+                waitHint=5000
+            )
+            time.sleep(0.5)
+
+        for name, (attr, _, _) in WORKERS.items():
+            process = getattr(self, attr)
+
+            if process is None:
+                continue
+
             try:
-                if self.ips_process.poll() is None:
-                    logger.info(
-                        "Stopping IPS worker..."
+                if process.poll() is None:
+                    logger.warning(
+                        f"{name} worker did not stop within "
+                        f"{GRACEFUL_STOP_SECONDS}s. Terminating it."
                     )
-
-                    self.ips_process.terminate()
-                    self.ips_process.wait(timeout=10)
-
+                    process.kill()
+                    process.wait(timeout=5)
+                else:
                     logger.info(
-                        "IPS worker stopped."
+                        f"{name} worker stopped "
+                        f"(exit code: {process.returncode})."
                     )
-
-            except subprocess.TimeoutExpired:
-                logger.warning(
-                    "IPS worker did not stop gracefully. "
-                    "Terminating it."
-                )
-
-                self.ips_process.kill()
-
             except Exception as e:
-                logger.exception(
-                    f"Error stopping IPS worker: {e}"
-                )
-
+                logger.exception(f"Error stopping {name} worker: {e}")
             finally:
-                self.ips_process = None
+                setattr(self, attr, None)
 
     def SvcStop(self):
         # Tell Windows that the service is stopping.
         self.ReportServiceStatus(
-            win32service.SERVICE_STOP_PENDING
+            win32service.SERVICE_STOP_PENDING,
+            waitHint=(GRACEFUL_STOP_SECONDS + 10) * 1000
         )
 
-        logger = get_logger()
-
-        # Stop correlation worker
-        self.stop_correlation_worker(logger)
-
-        # Stop IPS worker
-        self.stop_ips_worker(logger)
-
-        # Stop NIDS worker
-        self.stop_nids_worker(logger)
-
-        # Stop HIDS worker
-        self.stop_hids_worker(logger)
-
-        # Signal the stop event.
+        # Signal the stop event. SvcDoRun leaves its watchdog loop
+        # and stops the workers, so no worker is restarted mid-stop.
         win32event.SetEvent(self.stop_event)
 
     def SvcDoRun(self):
         logger = get_logger()
 
+        ensure_data_layout()
+
         logger.info(
-            "IDSIPS Security Service started."
+            f"IDSIPS Security Service {__version__} started. "
+            f"App: {APP_DIR} | Data: {DATA_DIR}"
         )
 
         servicemanager.LogInfoMsg(
-            "IDSIPS Security Service has started."
+            f"IDSIPS Security Service {__version__} has started."
         )
 
-        # Start HIDS worker
-        self.start_hids_worker(logger)
+        # Named stop event the workers wait on
+        try:
+            self.worker_stop_event = create_stop_event()
+        except Exception as e:
+            logger.exception(
+                f"Cannot create worker stop event; workers will be "
+                f"terminated on stop: {e}"
+            )
 
-        # Start NIDS worker
-        self.start_nids_worker(logger)
+        for name in WORKERS:
+            self.start_worker(name, logger)
 
-        # Start correlation worker
-        self.start_correlation_worker(logger)
+        started_at = time.monotonic()
 
-        # Start IPS worker
-        self.start_ips_worker(logger)
+        for state in self.worker_state.values():
+            state["started_at"] = started_at
 
-        # Keep the Windows service running
-        win32event.WaitForSingleObject(
-            self.stop_event,
-            win32event.INFINITE
-        )
+        # Keep the Windows service running and watch the workers
+        while True:
+            result = win32event.WaitForSingleObject(
+                self.stop_event,
+                WATCHDOG_INTERVAL_MS
+            )
+
+            if result == win32event.WAIT_OBJECT_0:
+                break
+
+            try:
+                self.check_workers(logger)
+            except Exception as e:
+                logger.exception(
+                    f"Watchdog check failed: {e}"
+                )
+
+        self.stop_workers(logger)
 
         logger.info(
             "IDSIPS Security Service stopped."
