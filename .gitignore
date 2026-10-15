@@ -24,7 +24,6 @@ __pycache__/
 # Python packaging
 *.egg-info/
 dist/
-build/
 
 # Environment / secrets
 .env
